@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Meridian: Race the Dawn</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #05070d; color: #e8ecf4; overflow: hidden;
+  }
+  #app { display: flex; height: 100vh; }
+  #mapWrap { position: relative; flex: 1; min-width: 0; }
+  canvas { display: block; width: 100%; height: 100%; cursor: crosshair; }
+  #sidebar {
+    width: 300px; flex-shrink: 0; background: #0b0f1a; border-left: 1px solid #1e2536;
+    padding: 16px; overflow-y: auto;
+  }
+  h1 { font-size: 18px; margin: 0 0 2px; letter-spacing: 0.3px; }
+  .tagline { font-size: 12px; color: #8993ad; margin-bottom: 14px; }
+  .stat { display: flex; justify-content: space-between; font-size: 13px; padding: 4px 0; border-bottom: 1px solid #171d2b; }
+  .stat b { color: #ffd35c; }
+  #leaderboard { margin-top: 12px; }
+  #leaderboard h2 { font-size: 13px; text-transform: uppercase; color: #8993ad; margin: 14px 0 6px; }
+  .lb-row { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 3px 0; }
+  .swatch { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+  .lb-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #legend { margin-top: 16px; font-size: 12px; color: #b3bad0; line-height: 1.6; }
+  #legend .dot { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:6px; }
+  #joinModal {
+    position: fixed; inset: 0; background: rgba(2,4,10,0.85); display: flex;
+    align-items: center; justify-content: center; z-index: 10;
+  }
+  #joinBox { background: #10151f; border: 1px solid #232b3d; border-radius: 10px; padding: 26px 30px; width: 320px; text-align: center; }
+  #joinBox h1 { font-size: 22px; margin-bottom: 4px; }
+  #joinBox input {
+    width: 100%; padding: 10px 12px; margin: 14px 0; border-radius: 6px; border: 1px solid #2a3348;
+    background: #060911; color: #e8ecf4; font-size: 14px;
+  }
+  #joinBox button {
+    width: 100%; padding: 10px; border-radius: 6px; border: none; background: #ffd35c;
+    color: #111; font-weight: 600; font-size: 14px; cursor: pointer;
+  }
+  #joinBox button:hover { background: #ffdd7f; }
+  #toast {
+    position: absolute; bottom: 16px; left: 16px; background: #1a0e0e; border: 1px solid #ff5c5c;
+    color: #ffbcbc; padding: 8px 14px; border-radius: 6px; font-size: 13px; opacity: 0; transition: opacity 0.3s;
+    pointer-events: none;
+  }
+  #clock { position: absolute; top: 12px; left: 16px; font-size: 13px; color: #b3bad0; background: rgba(5,7,13,0.6); padding: 6px 10px; border-radius: 6px; }
+  #hover { position: absolute; top: 12px; right: 16px; font-size: 12px; color: #b3bad0; background: rgba(5,7,13,0.6); padding: 6px 10px; border-radius: 6px; text-align: right; max-width: 240px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="mapWrap">
+    <canvas id="map"></canvas>
+    <div id="clock">UTC --:--:--</div>
+    <div id="hover">Click a cell to claim it</div>
+    <div id="toast"></div>
+  </div>
+  <div id="sidebar">
+    <h1>Meridian</h1>
+    <div class="tagline">Race the Dawn &mdash; the sun never sets on the game.</div>
+    <div class="stat"><span>Player</span><b id="statName">-</b></div>
+    <div class="stat"><span>Lumen</span><b id="statLumen">0</b></div>
+    <div class="stat"><span>Cells held</span><b id="statCells">0</b></div>
+    <div class="stat"><span>Players online</span><b id="statOnline">0</b></div>
+    <div id="legend">
+      <div><span class="dot" style="background:#ffd35c"></span>Rush zone (dawn/dusk): 3x income, half-price attacks</div>
+      <div><span class="dot" style="background:#5cc9ff"></span>Daylight: steady income</div>
+      <div><span class="dot" style="background:#2a3348"></span>Night: slow income</div>
+    </div>
+    <div id="leaderboard">
+      <h2>Leaderboard</h2>
+      <div id="lbRows"></div>
+    </div>
+  </div>
+</div>
+
+<div id="joinModal">
+  <div id="joinBox">
+    <h1>Meridian</h1>
+    <div class="tagline">Claim territory. Follow the dawn. Never miss a rush.</div>
+    <input id="nameInput" maxlength="20" placeholder="Pick a name" autofocus />
+    <button id="joinBtn">Enter the world</button>
+  </div>
+</div>
+
+<script src="client.js"></script>
+</body>
+</html>
