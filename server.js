@@ -3,9 +3,11 @@ const express = require("express");
 const { WebSocketServer } = require("ws");
 const { subsolarPoint, solarElevation } = require("./solar");
 const { CELL_SIZE, allCellIds, cellCenter } = require("./grid");
+const persistence = require("./persistence");
 
 const PORT = process.env.PORT || 8787;
 const TICK_MS = 2000;
+const FLUSH_MS = 20000; // how often owned territory gets persisted to D1
 const BASE_CLAIM_COST = 10;
 const MAX_DEFENSE = 40;
 const DEFENSE_GROWTH_PER_SEC = 0.4;
@@ -26,6 +28,20 @@ const players = new Map(); // ws -> player
 let nextColor = 0;
 let playerSeq = 1;
 
+/** Gathers every currently-owned cell in the shape persistence.saveCells expects. */
+function ownedCellsSnapshot() {
+  const out = [];
+  for (const [id, c] of cells.entries()) {
+    if (c.ownerName) out.push({ id, ownerName: c.ownerName, color: c.color, defense: c.defense });
+  }
+  return out;
+}
+
+async function flushToDisk() {
+  const snapshot = ownedCellsSnapshot();
+  if (snapshot.length > 0) await persistence.saveCells(snapshot);
+}
+
 function assignColor() {
   const c = PALETTE[nextColor % PALETTE.length];
   nextColor++;
@@ -44,7 +60,9 @@ function incomeFor(illum) {
 }
 
 function claimCost(cell, illum) {
-  if (!cell.ownerId) return BASE_CLAIM_COST;
+  // Ownership survives restarts via ownerName even when no live player (ownerId)
+  // is currently connected to that identity, so cost is based on ownerName.
+  if (!cell.ownerName) return BASE_CLAIM_COST;
   const attackCost = BASE_CLAIM_COST + cell.defense;
   return illum === "rush" ? attackCost * 0.5 : attackCost;
 }
@@ -73,54 +91,93 @@ function send(ws, obj) {
 }
 
 // ---- game tick: recompute illumination, accrue income/defense, broadcast ----
-let lastTick = Date.now();
-setInterval(() => {
-  const now = Date.now();
-  const dt = (now - lastTick) / 1000;
-  lastTick = now;
+function startTicking() {
+  let lastTick = Date.now();
+  setInterval(() => {
+    const now = Date.now();
+    const dt = (now - lastTick) / 1000;
+    lastTick = now;
 
-  const subsolar = subsolarPoint(new Date(now));
-  const changedIds = [];
+    const subsolar = subsolarPoint(new Date(now));
+    const changedIds = [];
 
-  for (const id of allCellIds()) {
-    const cell = cells.get(id);
-    const { lon, lat } = cellCenter(id);
-    const elev = solarElevation(lat, lon, subsolar);
-    const illum = illumCategory(elev);
-    if (illum !== cell.illum) changedIds.push(id);
-    cell.illum = illum;
+    for (const id of allCellIds()) {
+      const cell = cells.get(id);
+      const { lon, lat } = cellCenter(id);
+      const elev = solarElevation(lat, lon, subsolar);
+      const illum = illumCategory(elev);
+      if (illum !== cell.illum) changedIds.push(id);
+      cell.illum = illum;
 
-    if (cell.ownerId) {
-      const owner = [...players.values()].find((p) => p.id === cell.ownerId);
-      if (owner) {
-        owner.lumen += incomeFor(illum) * dt;
-        cell.defense = Math.min(MAX_DEFENSE, cell.defense + DEFENSE_GROWTH_PER_SEC * dt);
+      if (cell.ownerId) {
+        const owner = [...players.values()].find((p) => p.id === cell.ownerId);
+        if (owner) {
+          owner.lumen += incomeFor(illum) * dt;
+          cell.defense = Math.min(MAX_DEFENSE, cell.defense + DEFENSE_GROWTH_PER_SEC * dt);
+        }
       }
     }
-  }
 
-  broadcast({
-    type: "tick",
-    subsolar,
-    changed: changedIds.map(publicCell),
-    leaderboard: leaderboard(),
-    playerCount: players.size,
-    serverTimeUTC: new Date(now).toISOString(),
-  });
+    broadcast({
+      type: "tick",
+      subsolar,
+      changed: changedIds.map(publicCell),
+      leaderboard: leaderboard(),
+      playerCount: players.size,
+      serverTimeUTC: new Date(now).toISOString(),
+    });
 
-  for (const [ws, player] of players.entries()) {
-    send(ws, { type: "you", you: player });
-  }
-}, TICK_MS);
+    for (const [ws, player] of players.entries()) {
+      send(ws, { type: "you", you: player });
+    }
+  }, TICK_MS);
+
+  // Periodically persist owned territory so it survives restarts/redeploys.
+  setInterval(() => {
+    flushToDisk().catch((err) => console.error("Periodic flush failed:", err.message));
+  }, FLUSH_MS);
+}
 
 // ---- websocket handling ----
 const app = express();
 app.use(express.static(path.join(__dirname, "public")));
-const server = app.listen(PORT, () => {
-  console.log(`Meridian running: http://localhost:${PORT}`);
-});
-const wss = new WebSocketServer({ server });
+let server;
+let wss;
 
+async function main() {
+  const persisted = await persistence.loadAllCells();
+  for (const [id, saved] of persisted.entries()) {
+    const cell = cells.get(id);
+    if (cell) {
+      cell.ownerId = null; // no live connection owns it yet -- income resumes once reclaimed
+      cell.ownerName = saved.ownerName;
+      cell.color = saved.color;
+      cell.defense = saved.defense;
+    }
+  }
+
+  server = app.listen(PORT, () => {
+    console.log(`Meridian running: http://localhost:${PORT}`);
+    console.log(`Persistence: ${persistence.enabled ? "ON (Cloudflare D1)" : "OFF (in-memory only)"}`);
+  });
+  wss = new WebSocketServer({ server });
+  attachWebSocketHandlers();
+  startTicking();
+}
+
+async function shutdown() {
+  console.log("Shutting down -- flushing territory to disk...");
+  try {
+    await flushToDisk();
+  } catch (err) {
+    console.error("Shutdown flush failed:", err.message);
+  }
+  process.exit(0);
+}
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);
+
+function attachWebSocketHandlers() {
 wss.on("connection", (ws) => {
   ws.on("message", (raw) => {
     let msg;
@@ -179,6 +236,11 @@ wss.on("connection", (ws) => {
       broadcast({ type: "cellUpdate", cell: publicCell(id) });
       broadcast({ type: "leaderboard", leaderboard: leaderboard(), playerCount: players.size });
       send(ws, { type: "you", you: { ...player } });
+
+      // Best-effort immediate save so a claim survives even a restart moments later.
+      persistence
+        .saveCells([{ id, ownerName: cell.ownerName, color: cell.color, defense: cell.defense }])
+        .catch((err) => console.error("Claim save failed:", err.message));
     }
   });
 
@@ -189,4 +251,10 @@ wss.on("connection", (ws) => {
       broadcast({ type: "leaderboard", leaderboard: leaderboard(), playerCount: players.size });
     }
   });
+});
+}
+
+main().catch((err) => {
+  console.error("Fatal startup error:", err);
+  process.exit(1);
 });

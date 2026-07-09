@@ -37,9 +37,35 @@ node scripts/build-land.js
 - `public/client.js` — canvas rendering of real coastlines + the grid +
   live terminator marker, click-to-claim, leaderboard.
 
-No accounts, no database yet — state lives in memory and resets when the
-server restarts. That's the right amount of scope for a prototype; see
-"Taking this further" below for what a real launch needs.
+- `persistence.js` — optional layer that saves owned territory to a
+  Cloudflare D1 database over its HTTP API, so claims survive restarts and
+  redeploys. If the required env vars aren't set, this is a no-op and the
+  game behaves exactly like the original in-memory-only prototype.
+
+Still no player accounts — territory persists by name/color, but a
+reconnecting player gets a new session identity, so they can't yet resume
+crediting income to an old empire. That's the next logical step (see
+"Taking this further").
+
+## Persistence (optional, recommended for a real deploy)
+
+By default state lives in memory and resets on every restart. To make
+claimed territory survive restarts/redeploys, set three environment
+variables and Meridian will automatically start persisting to Cloudflare D1:
+
+- `CF_ACCOUNT_ID` — your Cloudflare account ID (visible on the right side of
+  any page in the Cloudflare dashboard, or on the Workers & Pages overview).
+- `CF_API_TOKEN` — a Cloudflare API token with D1 edit permissions. Create
+  one at My Profile → API Tokens → Create Token, using the "Edit Cloudflare
+  Workers" template (it includes D1) or a custom token scoped to D1 Edit.
+- `CF_D1_DATABASE_ID` — the UUID of the D1 database to use (a database named
+  `meridian` with the right `cells` table already exists if you set this up
+  with Claude's help; otherwise create one and run the schema in
+  `scripts/d1-schema.sql`).
+
+On Render: Dashboard → your service → **Environment** → add the three
+variables → save (triggers an automatic redeploy). Without them, Meridian
+just logs "Persistence: OFF (in-memory only)" and runs as before.
 
 ## Deploying so people around the world can actually join
 
