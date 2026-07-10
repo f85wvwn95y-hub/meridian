@@ -62,6 +62,50 @@
   #hover { position: absolute; top: 12px; right: 16px; font-size: 12px; color: #b3bad0; background: rgba(5,7,13,0.6); padding: 6px 10px; border-radius: 6px; text-align: right; max-width: 240px; }
   #sidebarToggle { display: none; }
 
+  #eventBanner {
+    position: absolute; top: 12px; left: 50%; transform: translateX(-50%); display: none;
+    background: linear-gradient(90deg, rgba(255,211,92,0.18), rgba(255,211,92,0.06));
+    border: 1px solid #ffd35c; color: #ffe9b8; padding: 7px 16px; border-radius: 999px;
+    font-size: 12px; font-weight: 600; white-space: nowrap; max-width: 90%; overflow: hidden; text-overflow: ellipsis;
+  }
+
+  #abilities { margin-top: 14px; }
+  #abilities h2 { font-size: 13px; text-transform: uppercase; color: #8993ad; margin: 14px 0 6px; }
+  .ability-row { display: flex; gap: 6px; }
+  .abilityBtn {
+    flex: 1; padding: 8px 4px; border-radius: 6px; border: 1px solid #2a3348; background: #131a29;
+    color: #e8ecf4; font-size: 11px; font-weight: 600; cursor: pointer; text-align: center; line-height: 1.5;
+  }
+  .abilityBtn .costTag { display: block; color: #ffd35c; font-size: 10px; font-weight: 400; }
+  .abilityBtn.active { border-color: #ffd35c; background: #2a2410; }
+  .abilityBtn:disabled { opacity: 0.4; cursor: not-allowed; }
+  #abilityHint { font-size: 11px; color: #8993ad; min-height: 15px; margin-top: 5px; }
+
+  #guildChatSection, #guildWarsSection { margin-top: 14px; }
+  #guildChatSection h2, #guildWarsSection h2, #hallOfFame h2 {
+    font-size: 13px; text-transform: uppercase; color: #8993ad; margin: 14px 0 6px;
+  }
+  #guildChatMessages { max-height: 120px; overflow-y: auto; font-size: 12px; margin-bottom: 6px; }
+  .chat-msg { padding: 2px 0; line-height: 1.4; word-break: break-word; }
+  .chat-msg b { color: #ffd35c; }
+  .chatInputRow, .warDeclareRow { display: flex; gap: 6px; }
+  .chatInputRow input, .warDeclareRow input {
+    flex: 1; min-width: 0; padding: 7px 9px; border-radius: 6px; border: 1px solid #2a3348;
+    background: #060911; color: #e8ecf4; font-size: 12px;
+  }
+  .chatInputRow button, .warDeclareRow button {
+    padding: 7px 10px; border-radius: 6px; border: none; background: #ffd35c; color: #111;
+    font-weight: 600; font-size: 12px; cursor: pointer; white-space: nowrap;
+  }
+  .war-row { font-size: 12px; padding: 6px 0; border-bottom: 1px solid #171d2b; }
+  .war-row .war-title { display: flex; justify-content: space-between; margin-bottom: 4px; }
+  .war-bar { height: 6px; border-radius: 3px; background: #171d2b; overflow: hidden; display: flex; }
+  .war-bar .a { background: #5cc9ff; }
+  .war-bar .b { background: #ff5c5c; }
+  #hallOfFame { margin-top: 14px; }
+  #seasonInfoLine { font-size: 11px; color: #8993ad; margin-bottom: 4px; }
+  .hof-entry { font-size: 12px; padding: 3px 0; color: #b3bad0; }
+
   /* ---- Mobile layout: sidebar becomes a slide-up bottom sheet ---- */
   @media (max-width: 760px), (pointer: coarse) and (max-width: 900px) {
     #app { flex-direction: column; }
@@ -95,6 +139,7 @@
     <canvas id="map"></canvas>
     <div id="clock">UTC --:--:--</div>
     <div id="hover">Click a cell to claim it</div>
+    <div id="eventBanner"></div>
     <div id="toast"></div>
     <button id="sidebarToggle">Lumen: <span id="toggleLumen">0</span> &middot; Stats &uarr;</button>
   </div>
@@ -113,8 +158,43 @@
       <div>Guildmates can't attack each other's territory.</div>
       <div>Click your own cell to fortify it (spend Lumen to raise defense).</div>
     </div>
+
+    <div id="abilities">
+      <h2>Abilities</h2>
+      <div class="ability-row">
+        <button class="abilityBtn" id="abilityShield" data-ability="shield">Shield<span class="costTag">30</span></button>
+        <button class="abilityBtn" id="abilityOvercharge" data-ability="overcharge">Overcharge<span class="costTag">25</span></button>
+        <button class="abilityBtn" id="abilitySiege" data-ability="siege">Siege<span class="costTag">20</span></button>
+      </div>
+      <div id="abilityHint">Shield protects a cell you own. Siege weakens an enemy cell. Overcharge doubles your income.</div>
+    </div>
+
+    <div id="hallOfFame">
+      <h2>Season</h2>
+      <div id="seasonInfoLine">Season 1</div>
+      <div id="hofRows"></div>
+    </div>
+
+    <div id="guildWarsSection" style="display:none">
+      <h2>Guild Wars</h2>
+      <div id="warRows"></div>
+      <div class="warDeclareRow">
+        <input id="warTargetInput" maxlength="6" placeholder="Rival guild tag" />
+        <button id="warDeclareBtn">Declare War</button>
+      </div>
+    </div>
+
+    <div id="guildChatSection" style="display:none">
+      <h2>Guild Chat</h2>
+      <div id="guildChatMessages"></div>
+      <div class="chatInputRow">
+        <input id="guildChatInput" maxlength="200" placeholder="Message your guild..." />
+        <button id="guildChatSend">Send</button>
+      </div>
+    </div>
+
     <div id="leaderboard">
-      <h2>Leaderboard</h2>
+      <h2>Season Leaderboard</h2>
       <div id="lbRows"></div>
       <h2>Top Guilds</h2>
       <div id="guildRows"></div>

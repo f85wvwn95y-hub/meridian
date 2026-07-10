@@ -16,6 +16,21 @@
   let hoveredId = null;
   let fortifyCfg = { baseCost: 8, increment: 5, maxDefense: 100 }; // defaults, overwritten by server on welcome
 
+  let abilityCfg = {
+    shield: { cost: 30, durationMs: 60000 },
+    overcharge: { cost: 25, durationMs: 30000, multiplier: 2 },
+    siege: { cost: 20, durationMs: 20000 },
+    cooldownMs: 45000,
+  };
+  let activeAbility = null; // "shield" | "overcharge" | "siege" | null -- awaiting a target click
+  const abilityCooldownUntil = { shield: 0, overcharge: 0, siege: 0 };
+  let currentEventState = null;
+  let seasonInfo = { number: 1, startedAt: Date.now(), durationMs: 30 * 24 * 60 * 60 * 1000 };
+  let recentSeasons = [];
+  let myGuildChat = [];
+  let myWars = [];
+  let recentWarResults = [];
+
   function resize() {
     const wrap = document.getElementById("mapWrap");
     W = wrap.clientWidth;
@@ -97,6 +112,18 @@
         ctx.fillStyle = "#ffffff";
         ctx.fillRect(x0 + 2, y0 + 2, 3, 3);
       }
+      if (c.shieldMsLeft > 0) {
+        ctx.strokeStyle = "#5cffea";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(x0 + 1.5, y0 + 1.5, x1 - x0 - 3, y1 - y0 - 3);
+      }
+      if (c.siegeMsLeft > 0) {
+        ctx.strokeStyle = "#ff5c5c";
+        ctx.setLineDash([3, 2]);
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(x0 + 1, y0 + 1, x1 - x0 - 2, y1 - y0 - 2);
+        ctx.setLineDash([]);
+      }
       if (id === hoveredId) {
         ctx.strokeStyle = "#ffffff";
         ctx.lineWidth = 1.5;
@@ -130,18 +157,96 @@
     document.getElementById("statCells").textContent = me.cellCount;
     const toggleLumen = document.getElementById("toggleLumen");
     if (toggleLumen) toggleLumen.textContent = Math.round(me.lumen);
+    updateGuildSectionsVisibility();
+    updateAbilityButtons();
   }
 
   function renderLeaderboard(lb) {
     const rows = lb
       .map((p) => {
         const tag = p.guild ? ` <span style="color:#8993ad">[${escapeHtml(p.guild)}]</span>` : "";
+        const score = p.seasonLumen != null ? p.seasonLumen : p.lumen;
         return `<div class="lb-row"><span class="swatch" style="background:${p.color}"></span>
-        <span class="lb-name">${escapeHtml(p.name)}${tag}</span><span>${Math.round(p.lumen)}</span></div>`;
+        <span class="lb-name">${escapeHtml(p.name)}${tag}</span><span>${Math.round(score)}</span></div>`;
       })
       .join("");
     document.getElementById("lbRows").innerHTML = rows;
   }
+
+  function renderEventBanner() {
+    const el = document.getElementById("eventBanner");
+    if (!currentEventState) {
+      el.style.display = "none";
+      return;
+    }
+    el.textContent = `${currentEventState.name} — ${currentEventState.desc}`;
+    el.style.display = "block";
+  }
+
+  function renderSeasonInfo() {
+    const daysLeft = Math.max(0, Math.ceil((seasonInfo.startedAt + seasonInfo.durationMs - Date.now()) / 86400000));
+    document.getElementById("seasonInfoLine").textContent = `Season ${seasonInfo.number} — ${daysLeft}d left`;
+
+    const rows = recentSeasons
+      .map((s) => {
+        const top = s.topPlayers && s.topPlayers[0];
+        const topGuild = s.topGuilds && s.topGuilds[0];
+        const who = top ? `${escapeHtml(top.name)} (${Math.round(top.seasonLumen)})` : "--";
+        const guildWho = topGuild ? ` &middot; [${escapeHtml(topGuild.guild)}]` : "";
+        return `<div class="hof-entry">Season ${s.seasonNumber}: ${who}${guildWho}</div>`;
+      })
+      .join("");
+    document.getElementById("hofRows").innerHTML = rows || `<div class="hof-entry" style="color:#8993ad">No seasons completed yet</div>`;
+  }
+
+  function renderGuildChat() {
+    const box = document.getElementById("guildChatMessages");
+    box.innerHTML = myGuildChat
+      .map((m) => `<div class="chat-msg"><b>${escapeHtml(m.from)}:</b> ${escapeHtml(m.text)}</div>`)
+      .join("");
+    box.scrollTop = box.scrollHeight;
+  }
+
+  function renderWars() {
+    const rows = myWars
+      .map((w) => {
+        const total = Math.max(1, w.scoreA + w.scoreB);
+        const pctA = Math.round((w.scoreA / total) * 100);
+        return `<div class="war-row">
+          <div class="war-title"><span>[${escapeHtml(w.guildA)}] ${w.scoreA} &ndash; ${w.scoreB} [${escapeHtml(w.guildB)}]</span></div>
+          <div class="war-bar"><span class="a" style="width:${pctA}%"></span><span class="b" style="width:${100 - pctA}%"></span></div>
+        </div>`;
+      })
+      .join("");
+    const resultRows = recentWarResults
+      .slice(0, 3)
+      .map((r) => {
+        const outcome = r.winner ? `[${escapeHtml(r.winner)}] won` : "Draw";
+        return `<div class="hof-entry">[${escapeHtml(r.guildA)}] ${r.scoreA}-${r.scoreB} [${escapeHtml(r.guildB)}] &mdash; ${outcome}</div>`;
+      })
+      .join("");
+    document.getElementById("warRows").innerHTML = rows + resultRows || `<div class="hof-entry" style="color:#8993ad">No active wars</div>`;
+  }
+
+  function updateGuildSectionsVisibility() {
+    const inGuild = !!(me && me.guild);
+    document.getElementById("guildChatSection").style.display = inGuild ? "block" : "none";
+    document.getElementById("guildWarsSection").style.display = inGuild ? "block" : "none";
+  }
+
+  function updateAbilityButtons() {
+    const now = Date.now();
+    for (const kind of ["shield", "overcharge", "siege"]) {
+      const btn = document.getElementById("ability" + kind[0].toUpperCase() + kind.slice(1));
+      if (!btn) continue;
+      const remaining = Math.max(0, abilityCooldownUntil[kind] - now);
+      const cfg = abilityCfg[kind] || {};
+      btn.disabled = remaining > 0 || !me || me.lumen < (cfg.cost || 0);
+      btn.querySelector(".costTag").textContent = remaining > 0 ? `${Math.ceil(remaining / 1000)}s` : cfg.cost;
+      btn.classList.toggle("active", activeAbility === kind);
+    }
+  }
+  setInterval(updateAbilityButtons, 500);
 
   function renderGuildLeaderboard(gl) {
     const rows = (gl || [])
@@ -173,9 +278,20 @@
         cellState = new Map(msg.cells.map((c) => [c.id, c]));
         subsolar = msg.subsolar;
         if (msg.fortify) fortifyCfg = msg.fortify;
+        if (msg.abilities) abilityCfg = msg.abilities;
+        currentEventState = msg.event || null;
+        if (msg.season) seasonInfo = msg.season;
+        recentSeasons = msg.recentSeasons || [];
+        myGuildChat = msg.guildChat || [];
+        myWars = msg.wars || [];
+        recentWarResults = msg.recentWarResults || [];
         me = msg.you;
         renderLeaderboard(msg.leaderboard);
         renderGuildLeaderboard(msg.guildLeaderboard);
+        renderEventBanner();
+        renderSeasonInfo();
+        renderGuildChat();
+        renderWars();
         document.getElementById("statOnline").textContent = msg.playerCount;
         updateStats();
         draw();
@@ -186,6 +302,11 @@
         renderGuildLeaderboard(msg.guildLeaderboard);
         document.getElementById("statOnline").textContent = msg.playerCount;
         clockEl.textContent = "UTC " + msg.serverTimeUTC.slice(11, 19);
+        if (msg.event !== undefined && msg.event?.id !== currentEventState?.id) {
+          currentEventState = msg.event || null;
+          renderEventBanner();
+        }
+        renderSeasonInfo();
         draw();
       } else if (msg.type === "cellUpdate") {
         cellState.set(msg.cell.id, msg.cell);
@@ -199,6 +320,35 @@
         document.getElementById("statOnline").textContent = msg.playerCount;
       } else if (msg.type === "toast") {
         showToast(msg.message);
+      } else if (msg.type === "guildChat") {
+        myGuildChat.push(msg.entry);
+        myGuildChat = myGuildChat.slice(-30);
+        renderGuildChat();
+      } else if (msg.type === "warUpdate") {
+        const idx = myWars.findIndex((w) => w.guildA === msg.war.guildA && w.guildB === msg.war.guildB);
+        if (idx >= 0) myWars[idx] = msg.war;
+        else if (me && (msg.war.guildA === me.guild || msg.war.guildB === me.guild)) myWars.push(msg.war);
+        renderWars();
+      } else if (msg.type === "warDeclared") {
+        if (me && (msg.war.guildA === me.guild || msg.war.guildB === me.guild)) {
+          myWars.push(msg.war);
+          renderWars();
+        }
+        showToast(`War declared: [${msg.war.guildA}] vs [${msg.war.guildB}]!`);
+      } else if (msg.type === "warEnded") {
+        myWars = myWars.filter((w) => !(w.guildA === msg.result.guildA && w.guildB === msg.result.guildB));
+        recentWarResults.unshift(msg.result);
+        recentWarResults = recentWarResults.slice(0, 5);
+        renderWars();
+        if (me && (msg.result.guildA === me.guild || msg.result.guildB === me.guild)) {
+          const outcome = msg.result.winner ? (msg.result.winner === me.guild ? "Your guild won!" : "Your guild lost.") : "The war ended in a draw.";
+          showToast(`War over: [${msg.result.guildA}] ${msg.result.scoreA}-${msg.result.scoreB} [${msg.result.guildB}] — ${outcome}`);
+        }
+      } else if (msg.type === "seasonEnd") {
+        seasonInfo = { number: msg.seasonNumber, startedAt: msg.seasonStartedAt, durationMs: seasonInfo.durationMs };
+        recentSeasons = [msg.summary, ...recentSeasons].slice(0, 5);
+        renderSeasonInfo();
+        showToast(`Season ${msg.summary.seasonNumber} complete! Season ${msg.seasonNumber} begins.`);
       } else if (msg.type === "error") {
         const modal = document.getElementById("joinModal");
         if (modal) {
@@ -227,7 +377,7 @@
     if (c) {
       const owner = c.color ? c.ownerName + (c.guild ? ` [${c.guild}]` : "") : "unclaimed";
       let extra = "";
-      if (me && c.ownerName === me.name) {
+      if (!activeAbility && me && c.ownerName === me.name) {
         if (c.defense >= fortifyCfg.maxDefense) {
           extra = " — max defense";
         } else {
@@ -235,6 +385,8 @@
           extra = ` — click to fortify (${cost} Lumen)`;
         }
       }
+      if (c.shieldMsLeft > 0) extra += ` — shielded (${Math.ceil(c.shieldMsLeft / 1000)}s)`;
+      if (c.siegeMsLeft > 0) extra += ` — sieged (${Math.ceil(c.siegeMsLeft / 1000)}s)`;
       hoverEl.textContent = `${lat.toFixed(1)}°, ${lon.toFixed(1)}° — ${owner} — ${c.illum} — defense ${c.defense}${extra}`;
     }
     draw();
@@ -245,7 +397,69 @@
     const rect = canvas.getBoundingClientRect();
     const { lon, lat } = unproject(e.clientX - rect.left, e.clientY - rect.top);
     const id = cellIdFromLonLat(lon, lat);
+
+    if (activeAbility) {
+      ws.send(JSON.stringify({ type: "ability", ability: activeAbility, cellId: id }));
+      abilityCooldownUntil[activeAbility] = Date.now() + (abilityCfg.cooldownMs || 45000);
+      activeAbility = null;
+      document.getElementById("abilityHint").textContent =
+        "Shield protects a cell you own. Siege weakens an enemy cell. Overcharge doubles your income.";
+      updateAbilityButtons();
+      return;
+    }
+
     ws.send(JSON.stringify({ type: "claim", cellId: id }));
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && activeAbility) {
+      activeAbility = null;
+      document.getElementById("abilityHint").textContent =
+        "Shield protects a cell you own. Siege weakens an enemy cell. Overcharge doubles your income.";
+      updateAbilityButtons();
+    }
+  });
+
+  const abilityHints = {
+    shield: "Click one of your own cells to raise a shield.",
+    siege: "Click an enemy-owned cell to siege it.",
+  };
+
+  document.querySelectorAll(".abilityBtn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      if (!ws || ws.readyState !== WebSocket.OPEN || btn.disabled) return;
+      const kind = btn.dataset.ability;
+      if (kind === "overcharge") {
+        ws.send(JSON.stringify({ type: "ability", ability: "overcharge" }));
+        abilityCooldownUntil.overcharge = Date.now() + (abilityCfg.cooldownMs || 45000);
+        updateAbilityButtons();
+        return;
+      }
+      activeAbility = activeAbility === kind ? null : kind;
+      document.getElementById("abilityHint").textContent = activeAbility
+        ? abilityHints[activeAbility]
+        : "Shield protects a cell you own. Siege weakens an enemy cell. Overcharge doubles your income.";
+      updateAbilityButtons();
+    });
+  });
+
+  document.getElementById("guildChatSend").addEventListener("click", () => {
+    const input = document.getElementById("guildChatInput");
+    const text = input.value.trim();
+    if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({ type: "guildChat", text }));
+    input.value = "";
+  });
+  document.getElementById("guildChatInput").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") document.getElementById("guildChatSend").click();
+  });
+
+  document.getElementById("warDeclareBtn").addEventListener("click", () => {
+    const input = document.getElementById("warTargetInput");
+    const targetGuild = input.value.trim();
+    if (!targetGuild || !ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({ type: "declareWar", targetGuild }));
+    input.value = "";
   });
 
   fetch("land.json")

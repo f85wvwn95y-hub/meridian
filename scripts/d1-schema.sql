@@ -18,5 +18,22 @@ CREATE TABLE IF NOT EXISTS users (
   salt TEXT NOT NULL,
   guild TEXT,
   lumen REAL NOT NULL DEFAULT 20,
+  season_lumen REAL NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL
+);
+
+-- Small persistent key/value store for global game state (current season number,
+-- when it started, etc) that needs to survive restarts/redeploys.
+CREATE TABLE IF NOT EXISTS game_meta (
+  key TEXT PRIMARY KEY,
+  value TEXT
+);
+
+-- Archive of completed seasons' top performers, for a Hall of Fame panel.
+CREATE TABLE IF NOT EXISTS season_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  season_number INTEGER NOT NULL,
+  ended_at INTEGER NOT NULL,
+  top_players TEXT,
+  top_guilds TEXT
 );

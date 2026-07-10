@@ -46,6 +46,8 @@ function makeLimiter(max, windowMs) {
 const signupLimiter = makeLimiter(5, 60 * 60 * 1000); // 5 signups / hour / IP
 const loginLimiter = makeLimiter(10, 5 * 60 * 1000); // 10 login attempts / 5 min / IP
 const messageLimiter = makeLimiter(20, 1000); // 20 messages / second / connection
+const chatLimiter = makeLimiter(1, 2000); // 1 guild chat message / 2 sec / connection
+const declareWarLimiter = makeLimiter(3, 10 * 60 * 1000); // 3 war declarations / 10 min / IP -- it's free, so it needs its own cap to prevent toast-spam abuse
 
 module.exports = {
   MAX_CONNECTIONS_PER_IP,
@@ -55,4 +57,6 @@ module.exports = {
   signupLimiter,
   loginLimiter,
   messageLimiter,
+  chatLimiter,
+  declareWarLimiter,
 };

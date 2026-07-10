@@ -92,7 +92,7 @@ async function saveCells(cellList) {
 async function getUserByUsername(username) {
   if (!enabled) return null;
   const rows = await query(
-    "SELECT id, username, password_hash, salt, guild, lumen FROM users WHERE username = ?",
+    "SELECT id, username, password_hash, salt, guild, lumen, season_lumen FROM users WHERE username = ?",
     [username]
   );
   const row = (rows || [])[0];
@@ -104,6 +104,7 @@ async function getUserByUsername(username) {
     salt: row.salt,
     guild: row.guild || null,
     lumen: row.lumen,
+    seasonLumen: row.season_lumen || 0,
   };
 }
 
@@ -120,13 +121,81 @@ async function createUser({ username, passwordHash, salt, guild }) {
   return created ? created.id : null;
 }
 
-/** Persists an account's current lumen/guild (called periodically, like cell flushes). */
-async function saveUserState(userId, { lumen, guild }) {
+/** Persists an account's current lumen/guild/season progress (called periodically, like cell flushes). */
+async function saveUserState(userId, { lumen, guild, seasonLumen }) {
   if (!enabled) return;
   try {
-    await query("UPDATE users SET lumen = ?, guild = ? WHERE id = ?", [lumen, guild || null, userId]);
+    await query("UPDATE users SET lumen = ?, guild = ?, season_lumen = ? WHERE id = ?", [
+      lumen, guild || null, seasonLumen || 0, userId,
+    ]);
   } catch (err) {
     console.error("D1 user save failed:", err.message);
+  }
+}
+
+/** Reads a small set of persistent key/value settings (season number, timers, etc). */
+async function getGameMeta(keys) {
+  if (!enabled || !keys || keys.length === 0) return {};
+  const placeholders = keys.map(() => "?").join(", ");
+  const rows = await query(`SELECT key, value FROM game_meta WHERE key IN (${placeholders})`, keys);
+  const out = {};
+  for (const row of rows || []) out[row.key] = row.value;
+  return out;
+}
+
+async function setGameMeta(key, value) {
+  if (!enabled) return;
+  try {
+    await query(
+      `INSERT INTO game_meta (key, value) VALUES (?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      [key, value]
+    );
+  } catch (err) {
+    console.error("D1 game_meta save failed:", err.message);
+  }
+}
+
+/** Archives a completed season's top players/guilds into season_history. */
+async function archiveSeason(summary) {
+  if (!enabled) return;
+  try {
+    await query(
+      "INSERT INTO season_history (season_number, ended_at, top_players, top_guilds) VALUES (?, ?, ?, ?)",
+      [summary.seasonNumber, summary.endedAt, JSON.stringify(summary.topPlayers), JSON.stringify(summary.topGuilds)]
+    );
+  } catch (err) {
+    console.error("D1 season archive failed:", err.message);
+  }
+}
+
+/** Zeroes season_lumen for every account -- called once at season rollover, including offline players. */
+async function resetAllSeasonLumen() {
+  if (!enabled) return;
+  try {
+    await query("UPDATE users SET season_lumen = 0");
+  } catch (err) {
+    console.error("D1 season reset failed:", err.message);
+  }
+}
+
+/** Returns the most recent N archived seasons, newest first, for a Hall of Fame panel. */
+async function getRecentSeasons(limit = 5) {
+  if (!enabled) return [];
+  try {
+    const rows = await query(
+      "SELECT season_number, ended_at, top_players, top_guilds FROM season_history ORDER BY season_number DESC LIMIT ?",
+      [limit]
+    );
+    return (rows || []).map((row) => ({
+      seasonNumber: row.season_number,
+      endedAt: row.ended_at,
+      topPlayers: JSON.parse(row.top_players || "[]"),
+      topGuilds: JSON.parse(row.top_guilds || "[]"),
+    }));
+  } catch (err) {
+    console.error("D1 season history load failed:", err.message);
+    return [];
   }
 }
 
@@ -137,4 +206,9 @@ module.exports = {
   getUserByUsername,
   createUser,
   saveUserState,
+  getGameMeta,
+  setGameMeta,
+  archiveSeason,
+  resetAllSeasonLumen,
+  getRecentSeasons,
 };
