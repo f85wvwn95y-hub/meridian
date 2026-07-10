@@ -11,10 +11,19 @@ const PORT = process.env.PORT || 8787;
 const TICK_MS = 2000;
 const FLUSH_MS = 20000; // how often owned territory / accounts get persisted to D1
 const BASE_CLAIM_COST = 10;
-const MAX_DEFENSE = 40;
+const MAX_DEFENSE = 40; // passive growth ceiling -- untouched cells drift up to this on their own
+const MAX_FORTIFIED_DEFENSE = 100; // active spending can push a cell's defense beyond MAX_DEFENSE, up to this
 const DEFENSE_GROWTH_PER_SEC = 0.4;
+const FORTIFY_INCREMENT = 5; // defense added per fortify action
+const FORTIFY_BASE_COST = 8; // Lumen cost to fortify a cell currently at 0 defense
 const RUSH_HALF_WIDTH_DEG = 6; // solar elevation within +/- this = "rush zone"
 const MIN_CLAIM_INTERVAL_MS = 150; // basic anti-spam throttle on claims per connection
+
+// Fortifying gets pricier the more defense a cell already has, so turtling
+// an already-strong cell into a near-unbreakable one costs real investment.
+function fortifyCost(defense) {
+  return Math.round(FORTIFY_BASE_COST * (1 + defense / 20));
+}
 
 const PALETTE = [
   "#ff5c5c", "#5cc9ff", "#ffd35c", "#7dff5c", "#c65cff",
@@ -168,7 +177,11 @@ function startTicking() {
         const owner = [...players.values()].find((p) => p.id === cell.ownerId);
         if (owner) {
           owner.lumen += incomeFor(illum) * dt;
-          cell.defense = Math.min(MAX_DEFENSE, cell.defense + DEFENSE_GROWTH_PER_SEC * dt);
+          // Passive drift only climbs to MAX_DEFENSE -- it never pulls a
+          // fortified cell's defense back down below where a player paid it up to.
+          if (cell.defense < MAX_DEFENSE) {
+            cell.defense = Math.min(MAX_DEFENSE, cell.defense + DEFENSE_GROWTH_PER_SEC * dt);
+          }
         }
       }
     }
@@ -255,6 +268,11 @@ function registerPlayer(ws, player) {
     cellSize: CELL_SIZE,
     cells: allCellIds().map(publicCell),
     subsolar: subsolarPoint(new Date()),
+    fortify: {
+      baseCost: FORTIFY_BASE_COST,
+      increment: FORTIFY_INCREMENT,
+      maxDefense: MAX_FORTIFIED_DEFENSE,
+    },
     leaderboard: leaderboard(),
     guildLeaderboard: guildLeaderboard(),
     playerCount: players.size,
@@ -427,7 +445,35 @@ wss.on("connection", (ws, req) => {
 
         const id = Number(msg.cellId);
         const cell = cells.get(id);
-        if (!cell || cell.ownerId === player.id) return;
+        if (!cell) return;
+
+        if (cell.ownerId === player.id) {
+          // Clicking territory you already hold fortifies it instead of a no-op re-claim.
+          if (cell.defense >= MAX_FORTIFIED_DEFENSE) {
+            send(ws, { type: "error", message: "This cell is already at maximum defense." });
+            return;
+          }
+          const fCost = fortifyCost(cell.defense);
+          if (player.lumen < fCost) {
+            send(ws, { type: "error", message: `Not enough Lumen to fortify (needs ${fCost}).` });
+            return;
+          }
+          player.lumen -= fCost;
+          cell.defense = Math.min(MAX_FORTIFIED_DEFENSE, cell.defense + FORTIFY_INCREMENT);
+
+          broadcast({ type: "cellUpdate", cell: publicCell(id) });
+          send(ws, { type: "you", you: { ...player } });
+          send(ws, {
+            type: "toast",
+            message: `Fortified -- defense now ${Math.round(cell.defense)} (-${fCost} Lumen)`,
+          });
+
+          persistence
+            .saveCells([{ id, ownerName: cell.ownerName, color: cell.color, defense: cell.defense, guild: cell.guild }])
+            .catch((err) => console.error("Fortify save failed:", err.message));
+          return;
+        }
+
         const cost = claimCost(cell, cell.illum, player.guild);
         if (!Number.isFinite(cost)) {
           send(ws, { type: "error", message: "Can't attack a guildmate's territory." });

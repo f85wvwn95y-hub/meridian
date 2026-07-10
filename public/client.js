@@ -14,6 +14,7 @@
   let me = null;
   let ws = null;
   let hoveredId = null;
+  let fortifyCfg = { baseCost: 8, increment: 5, maxDefense: 100 }; // defaults, overwritten by server on welcome
 
   function resize() {
     const wrap = document.getElementById("mapWrap");
@@ -171,6 +172,7 @@
         rows = 180 / cellSize;
         cellState = new Map(msg.cells.map((c) => [c.id, c]));
         subsolar = msg.subsolar;
+        if (msg.fortify) fortifyCfg = msg.fortify;
         me = msg.you;
         renderLeaderboard(msg.leaderboard);
         renderGuildLeaderboard(msg.guildLeaderboard);
@@ -195,6 +197,8 @@
         renderLeaderboard(msg.leaderboard);
         renderGuildLeaderboard(msg.guildLeaderboard);
         document.getElementById("statOnline").textContent = msg.playerCount;
+      } else if (msg.type === "toast") {
+        showToast(msg.message);
       } else if (msg.type === "error") {
         const modal = document.getElementById("joinModal");
         if (modal) {
@@ -222,7 +226,16 @@
     const c = cellState.get(hoveredId);
     if (c) {
       const owner = c.color ? c.ownerName + (c.guild ? ` [${c.guild}]` : "") : "unclaimed";
-      hoverEl.textContent = `${lat.toFixed(1)}°, ${lon.toFixed(1)}° — ${owner} — ${c.illum} — defense ${c.defense}`;
+      let extra = "";
+      if (me && c.ownerName === me.name) {
+        if (c.defense >= fortifyCfg.maxDefense) {
+          extra = " — max defense";
+        } else {
+          const cost = Math.round(fortifyCfg.baseCost * (1 + c.defense / 20));
+          extra = ` — click to fortify (${cost} Lumen)`;
+        }
+      }
+      hoverEl.textContent = `${lat.toFixed(1)}°, ${lon.toFixed(1)}° — ${owner} — ${c.illum} — defense ${c.defense}${extra}`;
     }
     draw();
   });
