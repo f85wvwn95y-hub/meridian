@@ -4,14 +4,16 @@ const { WebSocketServer } = require("ws");
 const { subsolarPoint, solarElevation } = require("./solar");
 const { CELL_SIZE, allCellIds, cellCenter } = require("./grid");
 const persistence = require("./persistence");
+const auth = require("./auth");
 
 const PORT = process.env.PORT || 8787;
 const TICK_MS = 2000;
-const FLUSH_MS = 20000; // how often owned territory gets persisted to D1
+const FLUSH_MS = 20000; // how often owned territory / accounts get persisted to D1
 const BASE_CLAIM_COST = 10;
 const MAX_DEFENSE = 40;
 const DEFENSE_GROWTH_PER_SEC = 0.4;
 const RUSH_HALF_WIDTH_DEG = 6; // solar elevation within +/- this = "rush zone"
+const MIN_CLAIM_INTERVAL_MS = 150; // basic anti-spam throttle on claims per connection
 
 const PALETTE = [
   "#ff5c5c", "#5cc9ff", "#ffd35c", "#7dff5c", "#c65cff",
@@ -35,6 +37,17 @@ function sanitizeGuild(raw) {
   return cleaned.length > 0 ? cleaned : null;
 }
 
+function sanitizeUsername(raw) {
+  const cleaned = String(raw || "").trim().toLowerCase().replace(/[^a-z0-9_]/g, "").slice(0, 20);
+  return cleaned.length >= 3 ? cleaned : null;
+}
+
+function cellCountFor(ownerName) {
+  let count = 0;
+  for (const c of cells.values()) if (c.ownerName === ownerName) count++;
+  return count;
+}
+
 /** Gathers every currently-owned cell in the shape persistence.saveCells expects. */
 function ownedCellsSnapshot() {
   const out = [];
@@ -49,6 +62,12 @@ function ownedCellsSnapshot() {
 async function flushToDisk() {
   const snapshot = ownedCellsSnapshot();
   if (snapshot.length > 0) await persistence.saveCells(snapshot);
+
+  // Also persist lumen/guild for any currently-connected registered accounts.
+  const accountSaves = [...players.values()]
+    .filter((p) => p.kind === "account")
+    .map((p) => persistence.saveUserState(p.userId, { lumen: p.lumen, guild: p.guild }));
+  await Promise.all(accountSaves);
 }
 
 function assignColor() {
@@ -176,6 +195,7 @@ function startTicking() {
 
 // ---- websocket handling ----
 const app = express();
+app.get("/health", (req, res) => res.status(200).send("ok")); // for uptime pingers -- cheap, no static file read
 app.use(express.static(path.join(__dirname, "public")));
 let server;
 let wss;
@@ -214,9 +234,41 @@ async function shutdown() {
 process.on("SIGTERM", shutdown);
 process.on("SIGINT", shutdown);
 
+// Reconnects a returning player's income to any cells they still own: after
+// a restart, or between sessions, persisted cells have ownerId=null (no live
+// connection). Matching by ownerName restores accrual without needing the
+// player to re-claim anything.
+function relinkOwnedCells(player) {
+  for (const cell of cells.values()) {
+    if (cell.ownerName === player.name) cell.ownerId = player.id;
+  }
+}
+
+function registerPlayer(ws, player) {
+  relinkOwnedCells(player);
+  players.set(ws, player);
+  send(ws, {
+    type: "welcome",
+    you: player,
+    token: player.token || null,
+    cellSize: CELL_SIZE,
+    cells: allCellIds().map(publicCell),
+    subsolar: subsolarPoint(new Date()),
+    leaderboard: leaderboard(),
+    guildLeaderboard: guildLeaderboard(),
+    playerCount: players.size,
+  });
+  broadcast({
+    type: "leaderboard",
+    leaderboard: leaderboard(),
+    guildLeaderboard: guildLeaderboard(),
+    playerCount: players.size,
+  });
+}
+
 function attachWebSocketHandlers() {
 wss.on("connection", (ws) => {
-  ws.on("message", (raw) => {
+  ws.on("message", async (raw) => {
     let msg;
     try {
       msg = JSON.parse(raw);
@@ -224,80 +276,175 @@ wss.on("connection", (ws) => {
       return;
     }
 
-    if (msg.type === "join") {
-      const name = String(msg.name || "Wanderer").slice(0, 20);
-      const guild = sanitizeGuild(msg.guild);
-      const player = {
-        id: playerSeq++,
-        name,
-        guild,
-        color: assignColor(),
-        lumen: 20,
-        cellCount: 0,
-      };
-      players.set(ws, player);
-      send(ws, {
-        type: "welcome",
-        you: player,
-        cellSize: CELL_SIZE,
-        cells: allCellIds().map(publicCell),
-        subsolar: subsolarPoint(new Date()),
-        leaderboard: leaderboard(),
-        guildLeaderboard: guildLeaderboard(),
-        playerCount: players.size,
-      });
-      broadcast({
-        type: "leaderboard",
-        leaderboard: leaderboard(),
-        guildLeaderboard: guildLeaderboard(),
-        playerCount: players.size,
-      });
-      return;
-    }
-
-    const player = players.get(ws);
-    if (!player) return;
-
-    if (msg.type === "claim") {
-      const id = Number(msg.cellId);
-      const cell = cells.get(id);
-      if (!cell || cell.ownerId === player.id) return;
-      const cost = claimCost(cell, cell.illum, player.guild);
-      if (!Number.isFinite(cost)) {
-        send(ws, { type: "error", message: "Can't attack a guildmate's territory." });
+    try {
+      if (msg.type === "guestJoin") {
+        const name = (String(msg.name || "Wanderer").trim().slice(0, 20)) || "Wanderer";
+        const guild = sanitizeGuild(msg.guild);
+        const collision = await persistence.getUserByUsername(name.toLowerCase());
+        if (collision) {
+          send(ws, { type: "error", message: "That name belongs to a registered account -- log in or pick another." });
+          return;
+        }
+        const player = {
+          kind: "guest",
+          id: `guest:${playerSeq++}`,
+          name,
+          guild,
+          color: assignColor(),
+          lumen: 20,
+          cellCount: cellCountFor(name),
+          lastClaimAt: 0,
+        };
+        registerPlayer(ws, player);
         return;
       }
-      if (player.lumen < cost) {
-        send(ws, { type: "error", message: "Not enough Lumen." });
+
+      if (msg.type === "signup") {
+        const username = sanitizeUsername(msg.username);
+        const password = String(msg.password || "");
+        if (!username) {
+          send(ws, { type: "error", message: "Username must be 3-20 letters, numbers, or underscores." });
+          return;
+        }
+        if (password.length < 6) {
+          send(ws, { type: "error", message: "Password must be at least 6 characters." });
+          return;
+        }
+        if (!persistence.enabled) {
+          send(ws, { type: "error", message: "Accounts aren't available right now -- try Guest play instead." });
+          return;
+        }
+        const guild = sanitizeGuild(msg.guild);
+        const { hash, salt } = auth.hashPassword(password);
+        const userId = await persistence.createUser({ username, passwordHash: hash, salt, guild });
+        if (!userId) {
+          send(ws, { type: "error", message: "That username is already taken." });
+          return;
+        }
+        const token = auth.signToken({ uid: userId, username });
+        const player = {
+          kind: "account",
+          id: `acct:${userId}`,
+          userId,
+          name: username,
+          guild,
+          color: assignColor(),
+          lumen: 20,
+          cellCount: cellCountFor(username),
+          lastClaimAt: 0,
+          token,
+        };
+        registerPlayer(ws, player);
         return;
       }
-      const prevOwner = cell.ownerId
-        ? [...players.values()].find((p) => p.id === cell.ownerId)
-        : null;
-      player.lumen -= cost;
-      if (prevOwner) prevOwner.cellCount = Math.max(0, prevOwner.cellCount - 1);
-      cell.ownerId = player.id;
-      cell.ownerName = player.name;
-      cell.color = player.color;
-      cell.defense = 0;
-      cell.guild = player.guild;
-      player.cellCount += 1;
 
-      broadcast({ type: "cellUpdate", cell: publicCell(id) });
-      broadcast({
-        type: "leaderboard",
-        leaderboard: leaderboard(),
-        guildLeaderboard: guildLeaderboard(),
-        playerCount: players.size,
-      });
-      send(ws, { type: "you", you: { ...player } });
+      if (msg.type === "login") {
+        const username = sanitizeUsername(msg.username);
+        const password = String(msg.password || "");
+        if (!persistence.enabled) {
+          send(ws, { type: "error", message: "Accounts aren't available right now -- try Guest play instead." });
+          return;
+        }
+        const user = username ? await persistence.getUserByUsername(username) : null;
+        if (!user || !auth.verifyPassword(password, user.salt, user.passwordHash)) {
+          send(ws, { type: "error", message: "Invalid username or password." });
+          return;
+        }
+        const token = auth.signToken({ uid: user.id, username: user.username });
+        const player = {
+          kind: "account",
+          id: `acct:${user.id}`,
+          userId: user.id,
+          name: user.username,
+          guild: user.guild,
+          color: assignColor(),
+          lumen: user.lumen,
+          cellCount: cellCountFor(user.username),
+          lastClaimAt: 0,
+          token,
+        };
+        registerPlayer(ws, player);
+        return;
+      }
 
-      // Best-effort immediate save so a claim survives even a restart moments later.
-      persistence
-        .saveCells([
-          { id, ownerName: cell.ownerName, color: cell.color, defense: cell.defense, guild: cell.guild },
-        ])
-        .catch((err) => console.error("Claim save failed:", err.message));
+      if (msg.type === "resume") {
+        const payload = auth.verifyToken(msg.token);
+        if (!payload || !persistence.enabled) {
+          send(ws, { type: "error", message: "Session expired -- please log in again." });
+          return;
+        }
+        const user = await persistence.getUserByUsername(payload.username);
+        if (!user || user.id !== payload.uid) {
+          send(ws, { type: "error", message: "Session expired -- please log in again." });
+          return;
+        }
+        const player = {
+          kind: "account",
+          id: `acct:${user.id}`,
+          userId: user.id,
+          name: user.username,
+          guild: user.guild,
+          color: assignColor(),
+          lumen: user.lumen,
+          cellCount: cellCountFor(user.username),
+          lastClaimAt: 0,
+          token: msg.token,
+        };
+        registerPlayer(ws, player);
+        return;
+      }
+
+      const player = players.get(ws);
+      if (!player) return;
+
+      if (msg.type === "claim") {
+        const now = Date.now();
+        if (now - player.lastClaimAt < MIN_CLAIM_INTERVAL_MS) return;
+        player.lastClaimAt = now;
+
+        const id = Number(msg.cellId);
+        const cell = cells.get(id);
+        if (!cell || cell.ownerId === player.id) return;
+        const cost = claimCost(cell, cell.illum, player.guild);
+        if (!Number.isFinite(cost)) {
+          send(ws, { type: "error", message: "Can't attack a guildmate's territory." });
+          return;
+        }
+        if (player.lumen < cost) {
+          send(ws, { type: "error", message: "Not enough Lumen." });
+          return;
+        }
+        const prevOwner = cell.ownerId
+          ? [...players.values()].find((p) => p.id === cell.ownerId)
+          : null;
+        player.lumen -= cost;
+        if (prevOwner) prevOwner.cellCount = Math.max(0, prevOwner.cellCount - 1);
+        cell.ownerId = player.id;
+        cell.ownerName = player.name;
+        cell.color = player.color;
+        cell.defense = 0;
+        cell.guild = player.guild;
+        player.cellCount += 1;
+
+        broadcast({ type: "cellUpdate", cell: publicCell(id) });
+        broadcast({
+          type: "leaderboard",
+          leaderboard: leaderboard(),
+          guildLeaderboard: guildLeaderboard(),
+          playerCount: players.size,
+        });
+        send(ws, { type: "you", you: { ...player } });
+
+        // Best-effort immediate save so a claim survives even a restart moments later.
+        persistence
+          .saveCells([
+            { id, ownerName: cell.ownerName, color: cell.color, defense: cell.defense, guild: cell.guild },
+          ])
+          .catch((err) => console.error("Claim save failed:", err.message));
+      }
+    } catch (err) {
+      console.error("Message handler error:", err);
+      send(ws, { type: "error", message: "Something went wrong -- please try again." });
     }
   });
 

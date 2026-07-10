@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
 <title>Meridian: Race the Dawn</title>
 <style>
   :root { color-scheme: dark; }
@@ -36,14 +36,23 @@
   #joinBox { background: #10151f; border: 1px solid #232b3d; border-radius: 10px; padding: 26px 30px; width: 320px; text-align: center; }
   #joinBox h1 { font-size: 22px; margin-bottom: 4px; }
   #joinBox input {
-    width: 100%; padding: 10px 12px; margin: 14px 0; border-radius: 6px; border: 1px solid #2a3348;
+    width: 100%; padding: 10px 12px; margin: 7px 0; border-radius: 6px; border: 1px solid #2a3348;
     background: #060911; color: #e8ecf4; font-size: 14px;
   }
-  #joinBox button {
-    width: 100%; padding: 10px; border-radius: 6px; border: none; background: #ffd35c;
+  #joinBox button.submitBtn {
+    width: 100%; padding: 10px; margin-top: 8px; border-radius: 6px; border: none; background: #ffd35c;
     color: #111; font-weight: 600; font-size: 14px; cursor: pointer;
   }
-  #joinBox button:hover { background: #ffdd7f; }
+  #joinBox button.submitBtn:hover { background: #ffdd7f; }
+  #authTabs { display: flex; gap: 6px; margin: 16px 0 10px; }
+  #authTabs button {
+    flex: 1; padding: 8px; border-radius: 6px; border: 1px solid #2a3348; background: #0b0f1a;
+    color: #b3bad0; font-size: 13px; font-weight: 600; cursor: pointer;
+  }
+  #authTabs button.active { background: #1c2536; color: #fff; border-color: #3a4864; }
+  .authPane { display: none; }
+  .authPane.active { display: block; }
+  #authError { color: #ff8f8f; font-size: 12px; min-height: 16px; margin-top: 4px; }
   #toast {
     position: absolute; bottom: 16px; left: 16px; background: #1a0e0e; border: 1px solid #ff5c5c;
     color: #ffbcbc; padding: 8px 14px; border-radius: 6px; font-size: 13px; opacity: 0; transition: opacity 0.3s;
@@ -51,6 +60,33 @@
   }
   #clock { position: absolute; top: 12px; left: 16px; font-size: 13px; color: #b3bad0; background: rgba(5,7,13,0.6); padding: 6px 10px; border-radius: 6px; }
   #hover { position: absolute; top: 12px; right: 16px; font-size: 12px; color: #b3bad0; background: rgba(5,7,13,0.6); padding: 6px 10px; border-radius: 6px; text-align: right; max-width: 240px; }
+  #sidebarToggle { display: none; }
+
+  /* ---- Mobile layout: sidebar becomes a slide-up bottom sheet ---- */
+  @media (max-width: 760px), (pointer: coarse) and (max-width: 900px) {
+    #app { flex-direction: column; }
+    #mapWrap { flex: 1; }
+    #sidebar {
+      position: fixed; left: 0; right: 0; bottom: 0; width: auto; max-height: 70vh;
+      border-left: none; border-top: 1px solid #1e2536; border-radius: 16px 16px 0 0;
+      transform: translateY(calc(100% - 52px)); transition: transform 0.25s ease;
+      box-shadow: 0 -8px 30px rgba(0,0,0,0.4); z-index: 8;
+    }
+    #sidebar.open { transform: translateY(0); }
+    #sidebar::before {
+      content: ""; display: block; width: 40px; height: 4px; border-radius: 2px;
+      background: #2a3348; margin: 0 auto 10px;
+    }
+    #sidebarToggle {
+      display: flex; align-items: center; justify-content: center; gap: 6px;
+      position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%);
+      background: #ffd35c; color: #111; font-weight: 700; font-size: 13px;
+      padding: 10px 18px; border-radius: 999px; border: none; z-index: 9;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.4);
+    }
+    #joinBox { width: min(340px, 92vw); padding: 22px 20px; }
+    #hover { display: none; }
+  }
 </style>
 </head>
 <body>
@@ -60,6 +96,7 @@
     <div id="clock">UTC --:--:--</div>
     <div id="hover">Click a cell to claim it</div>
     <div id="toast"></div>
+    <button id="sidebarToggle">Lumen: <span id="toggleLumen">0</span> &middot; Stats &uarr;</button>
   </div>
   <div id="sidebar">
     <h1>Meridian</h1>
@@ -88,9 +125,33 @@
   <div id="joinBox">
     <h1>Meridian</h1>
     <div class="tagline">Claim territory. Follow the dawn. Never miss a rush.</div>
-    <input id="nameInput" maxlength="20" placeholder="Pick a name" autofocus />
-    <input id="guildInput" maxlength="6" placeholder="Guild tag (optional)" />
-    <button id="joinBtn">Enter the world</button>
+
+    <div id="authTabs">
+      <button data-pane="login" class="active">Log in</button>
+      <button data-pane="signup">Sign up</button>
+      <button data-pane="guest">Guest</button>
+    </div>
+
+    <div id="loginPane" class="authPane active">
+      <input id="loginUsername" maxlength="20" placeholder="Username" autofocus />
+      <input id="loginPassword" type="password" placeholder="Password" />
+      <button class="submitBtn" id="loginBtn">Log in</button>
+    </div>
+
+    <div id="signupPane" class="authPane">
+      <input id="signupUsername" maxlength="20" placeholder="Username (3-20 characters)" />
+      <input id="signupPassword" type="password" placeholder="Password (6+ characters)" />
+      <input id="signupGuild" maxlength="6" placeholder="Guild tag (optional)" />
+      <button class="submitBtn" id="signupBtn">Create account</button>
+    </div>
+
+    <div id="guestPane" class="authPane">
+      <input id="guestName" maxlength="20" placeholder="Pick a name" />
+      <input id="guestGuild" maxlength="6" placeholder="Guild tag (optional)" />
+      <button class="submitBtn" id="guestBtn">Play as guest</button>
+    </div>
+
+    <div id="authError"></div>
   </div>
 </div>
 

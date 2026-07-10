@@ -127,6 +127,8 @@
     document.getElementById("statGuild").textContent = me.guild || "none";
     document.getElementById("statLumen").textContent = Math.round(me.lumen);
     document.getElementById("statCells").textContent = me.cellCount;
+    const toggleLumen = document.getElementById("toggleLumen");
+    if (toggleLumen) toggleLumen.textContent = Math.round(me.lumen);
   }
 
   function renderLeaderboard(lb) {
@@ -154,13 +156,16 @@
     return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   }
 
-  function connect(name, guild) {
+  function connect(joinMsg) {
     const proto = location.protocol === "https:" ? "wss" : "ws";
     ws = new WebSocket(`${proto}://${location.host}`);
-    ws.onopen = () => ws.send(JSON.stringify({ type: "join", name, guild }));
+    ws.onopen = () => ws.send(JSON.stringify(joinMsg));
     ws.onmessage = (ev) => {
       const msg = JSON.parse(ev.data);
       if (msg.type === "welcome") {
+        if (msg.token) localStorage.setItem("meridianToken", msg.token);
+        const modal = document.getElementById("joinModal");
+        if (modal) modal.remove();
         cellSize = msg.cellSize;
         cols = 360 / cellSize;
         rows = 180 / cellSize;
@@ -191,10 +196,23 @@
         renderGuildLeaderboard(msg.guildLeaderboard);
         document.getElementById("statOnline").textContent = msg.playerCount;
       } else if (msg.type === "error") {
-        showToast(msg.message);
+        const modal = document.getElementById("joinModal");
+        if (modal) {
+          // Still on the login/signup screen -- show inline and stop, don't
+          // treat this as a disconnect (a failed resume falls back to login).
+          document.getElementById("authError").textContent = msg.message;
+          if (joinMsg.type === "resume") {
+            localStorage.removeItem("meridianToken");
+            ws.close();
+          }
+        } else {
+          showToast(msg.message);
+        }
       }
     };
-    ws.onclose = () => showToast("Disconnected from server.");
+    ws.onclose = () => {
+      if (!document.getElementById("joinModal")) showToast("Disconnected from server.");
+    };
   }
 
   canvas.addEventListener("mousemove", (e) => {
@@ -224,19 +242,77 @@
       resize();
     });
 
-  document.getElementById("joinBtn").addEventListener("click", enter);
-  document.getElementById("nameInput").addEventListener("keydown", (e) => {
-    if (e.key === "Enter") enter();
-  });
-  document.getElementById("guildInput").addEventListener("keydown", (e) => {
-    if (e.key === "Enter") enter();
-  });
-  function enter() {
-    const name = document.getElementById("nameInput").value.trim() || "Wanderer";
-    const guild = document.getElementById("guildInput").value.trim();
-    document.getElementById("joinModal").remove();
-    connect(name, guild);
+  const sidebarToggle = document.getElementById("sidebarToggle");
+  if (sidebarToggle) {
+    sidebarToggle.addEventListener("click", () => {
+      document.getElementById("sidebar").classList.toggle("open");
+    });
   }
 
+  // ---- auth modal: tabs + submit handlers ----
+  function clearAuthError() {
+    const el = document.getElementById("authError");
+    if (el) el.textContent = "";
+  }
+
+  document.querySelectorAll("#authTabs button").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll("#authTabs button").forEach((b) => b.classList.remove("active"));
+      document.querySelectorAll(".authPane").forEach((p) => p.classList.remove("active"));
+      btn.classList.add("active");
+      document.getElementById(btn.dataset.pane + "Pane").classList.add("active");
+      clearAuthError();
+    });
+  });
+
+  document.getElementById("loginBtn").addEventListener("click", () => {
+    clearAuthError();
+    const username = document.getElementById("loginUsername").value.trim();
+    const password = document.getElementById("loginPassword").value;
+    if (!username || !password) {
+      document.getElementById("authError").textContent = "Enter a username and password.";
+      return;
+    }
+    connect({ type: "login", username, password });
+  });
+
+  document.getElementById("signupBtn").addEventListener("click", () => {
+    clearAuthError();
+    const username = document.getElementById("signupUsername").value.trim();
+    const password = document.getElementById("signupPassword").value;
+    const guild = document.getElementById("signupGuild").value.trim();
+    if (username.length < 3) {
+      document.getElementById("authError").textContent = "Username must be at least 3 characters.";
+      return;
+    }
+    if (password.length < 6) {
+      document.getElementById("authError").textContent = "Password must be at least 6 characters.";
+      return;
+    }
+    connect({ type: "signup", username, password, guild });
+  });
+
+  document.getElementById("guestBtn").addEventListener("click", () => {
+    clearAuthError();
+    const name = document.getElementById("guestName").value.trim() || "Wanderer";
+    const guild = document.getElementById("guestGuild").value.trim();
+    connect({ type: "guestJoin", name, guild });
+  });
+
+  // Enter key submits whichever pane is currently active.
+  document.querySelectorAll("#joinBox input").forEach((input) => {
+    input.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter") return;
+      const activePane = document.querySelector(".authPane.active");
+      if (activePane) activePane.querySelector(".submitBtn").click();
+    });
+  });
+
   resize();
+
+  // Try to silently resume a previous session before showing the login screen.
+  const savedToken = localStorage.getItem("meridianToken");
+  if (savedToken) {
+    connect({ type: "resume", token: savedToken });
+  }
 })();

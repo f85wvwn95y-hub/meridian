@@ -88,4 +88,53 @@ async function saveCells(cellList) {
   }
 }
 
-module.exports = { enabled, loadAllCells, saveCells };
+/** Looks up an account by username. Returns null if not found or persistence is off. */
+async function getUserByUsername(username) {
+  if (!enabled) return null;
+  const rows = await query(
+    "SELECT id, username, password_hash, salt, guild, lumen FROM users WHERE username = ?",
+    [username]
+  );
+  const row = (rows || [])[0];
+  if (!row) return null;
+  return {
+    id: row.id,
+    username: row.username,
+    passwordHash: row.password_hash,
+    salt: row.salt,
+    guild: row.guild || null,
+    lumen: row.lumen,
+  };
+}
+
+/** Creates a new account. Returns the new user's id, or null if the username is taken. */
+async function createUser({ username, passwordHash, salt, guild }) {
+  if (!enabled) return null;
+  const existing = await getUserByUsername(username);
+  if (existing) return null;
+  await query(
+    "INSERT INTO users (username, password_hash, salt, guild, lumen, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+    [username, passwordHash, salt, guild || null, 20, Date.now()]
+  );
+  const created = await getUserByUsername(username);
+  return created ? created.id : null;
+}
+
+/** Persists an account's current lumen/guild (called periodically, like cell flushes). */
+async function saveUserState(userId, { lumen, guild }) {
+  if (!enabled) return;
+  try {
+    await query("UPDATE users SET lumen = ?, guild = ? WHERE id = ?", [lumen, guild || null, userId]);
+  } catch (err) {
+    console.error("D1 user save failed:", err.message);
+  }
+}
+
+module.exports = {
+  enabled,
+  loadAllCells,
+  saveCells,
+  getUserByUsername,
+  createUser,
+  saveUserState,
+};
