@@ -1,49 +1,43 @@
-// Optional persistence layer backed by Cloudflare D1's HTTP API.
+// Persistence layer backed by a small Cloudflare Worker proxy in front of D1
+// (see cloudflare-worker/d1-proxy.js). We go through a Worker with a native
+// D1 binding rather than calling Cloudflare's control-plane REST API
+// directly, since that API can reject requests from some hosts' outbound IP
+// ranges even with fully valid credentials.
+//
 // If the required env vars aren't set, every function becomes a harmless
-// no-op so local development and testing work exactly as before --
-// state just lives in memory only, same as the original prototype.
-// .trim() guards against stray whitespace/newlines that can sneak in when
-// environment variables are pasted into a host's dashboard.
-const ACCOUNT_ID = (process.env.CF_ACCOUNT_ID || "").trim();
-const API_TOKEN = (process.env.CF_API_TOKEN || "").trim();
-const DATABASE_ID = (process.env.CF_D1_DATABASE_ID || "").trim();
+// no-op so local development and testing work exactly as before -- state
+// just lives in memory only, same as the original prototype.
+const PROXY_URL = (process.env.D1_PROXY_URL || "").trim();
+const PROXY_SECRET = (process.env.D1_PROXY_SECRET || "").trim();
 
-const enabled = Boolean(ACCOUNT_ID && API_TOKEN && DATABASE_ID);
-
-const API_URL = enabled
-  ? `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/d1/database/${DATABASE_ID}/query`
-  : null;
+const enabled = Boolean(PROXY_URL && PROXY_SECRET);
 
 if (enabled) {
-  console.log(
-    `D1 config -- account_id: "${ACCOUNT_ID}" (len ${ACCOUNT_ID.length}), ` +
-    `database_id: "${DATABASE_ID}" (len ${DATABASE_ID.length}), ` +
-    `token length: ${API_TOKEN.length}, url: ${API_URL}`
-  );
+  console.log(`D1 proxy config -- url: ${PROXY_URL}, secret length: ${PROXY_SECRET.length}`);
 }
 
 async function query(sql, params = []) {
   if (!enabled) return null;
-  const res = await fetch(API_URL, {
+  const res = await fetch(PROXY_URL, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${API_TOKEN}`,
+      "X-Proxy-Secret": PROXY_SECRET,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ sql, params }),
   });
   const json = await res.json();
   if (!json.success) {
-    console.error("D1 query failed:", JSON.stringify(json.errors || json));
+    console.error("D1 proxy query failed:", JSON.stringify(json.error || json));
     return null;
   }
-  return json.result?.[0]?.results ?? [];
+  return json.results ?? [];
 }
 
 /** Returns a Map<id, {ownerName, color, defense}> of every persisted owned cell. */
 async function loadAllCells() {
   if (!enabled) {
-    console.log("Persistence disabled (no CF_ACCOUNT_ID/CF_API_TOKEN/CF_D1_DATABASE_ID) -- starting fresh.");
+    console.log("Persistence disabled (no D1_PROXY_URL/D1_PROXY_SECRET) -- starting fresh.");
     return new Map();
   }
   try {
