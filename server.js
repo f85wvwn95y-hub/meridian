@@ -5,6 +5,7 @@ const { subsolarPoint, solarElevation } = require("./solar");
 const { CELL_SIZE, allCellIds, cellCenter } = require("./grid");
 const persistence = require("./persistence");
 const auth = require("./auth");
+const security = require("./security");
 
 const PORT = process.env.PORT || 8787;
 const TICK_MS = 2000;
@@ -217,7 +218,7 @@ async function main() {
     console.log(`Meridian running: http://localhost:${PORT}`);
     console.log(`Persistence: ${persistence.enabled ? "ON (Cloudflare D1)" : "OFF (in-memory only)"}`);
   });
-  wss = new WebSocketServer({ server });
+  wss = new WebSocketServer({ server, maxPayload: 4096 }); // 4KB is plenty for our small JSON messages
   attachWebSocketHandlers();
   startTicking();
 }
@@ -267,8 +268,22 @@ function registerPlayer(ws, player) {
 }
 
 function attachWebSocketHandlers() {
-wss.on("connection", (ws) => {
+wss.on("connection", (ws, req) => {
+  const ip = security.getClientIp(req);
+  if (!security.tryAddConnection(ip)) {
+    ws.close(1008, "Too many connections from your network -- please try again shortly.");
+    return;
+  }
+  let ipReleased = false;
+  const releaseIp = () => {
+    if (ipReleased) return;
+    ipReleased = true;
+    security.removeConnection(ip);
+  };
+
   ws.on("message", async (raw) => {
+    if (!security.messageLimiter(ws)) return; // silently drop -- a flooding client just gets ignored
+
     let msg;
     try {
       msg = JSON.parse(raw);
@@ -300,14 +315,18 @@ wss.on("connection", (ws) => {
       }
 
       if (msg.type === "signup") {
+        if (!security.signupLimiter(ip)) {
+          send(ws, { type: "error", message: "Too many accounts created from your network -- please try again later." });
+          return;
+        }
         const username = sanitizeUsername(msg.username);
         const password = String(msg.password || "");
         if (!username) {
           send(ws, { type: "error", message: "Username must be 3-20 letters, numbers, or underscores." });
           return;
         }
-        if (password.length < 6) {
-          send(ws, { type: "error", message: "Password must be at least 6 characters." });
+        if (password.length < 6 || password.length > 100) {
+          send(ws, { type: "error", message: "Password must be 6-100 characters." });
           return;
         }
         if (!persistence.enabled) {
@@ -339,8 +358,12 @@ wss.on("connection", (ws) => {
       }
 
       if (msg.type === "login") {
+        if (!security.loginLimiter(ip)) {
+          send(ws, { type: "error", message: "Too many login attempts from your network -- please wait a few minutes." });
+          return;
+        }
         const username = sanitizeUsername(msg.username);
-        const password = String(msg.password || "");
+        const password = String(msg.password || "").slice(0, 100);
         if (!persistence.enabled) {
           send(ws, { type: "error", message: "Accounts aren't available right now -- try Guest play instead." });
           return;
@@ -449,6 +472,7 @@ wss.on("connection", (ws) => {
   });
 
   ws.on("close", () => {
+    releaseIp();
     const player = players.get(ws);
     players.delete(ws);
     if (player) {
