@@ -12,6 +12,11 @@ const PROXY_SECRET = (process.env.D1_PROXY_SECRET || "").trim();
 
 const enabled = Boolean(PROXY_URL && PROXY_SECRET);
 
+console.log(
+  "Env keys containing PROXY or D1:",
+  Object.keys(process.env).filter((k) => /PROXY|D1/i.test(k))
+);
+
 if (enabled) {
   console.log(`D1 proxy config -- url: ${PROXY_URL}, secret length: ${PROXY_SECRET.length}`);
 }
