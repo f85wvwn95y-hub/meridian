@@ -2,15 +2,25 @@
 // If the required env vars aren't set, every function becomes a harmless
 // no-op so local development and testing work exactly as before --
 // state just lives in memory only, same as the original prototype.
-const ACCOUNT_ID = process.env.CF_ACCOUNT_ID;
-const API_TOKEN = process.env.CF_API_TOKEN;
-const DATABASE_ID = process.env.CF_D1_DATABASE_ID;
+// .trim() guards against stray whitespace/newlines that can sneak in when
+// environment variables are pasted into a host's dashboard.
+const ACCOUNT_ID = (process.env.CF_ACCOUNT_ID || "").trim();
+const API_TOKEN = (process.env.CF_API_TOKEN || "").trim();
+const DATABASE_ID = (process.env.CF_D1_DATABASE_ID || "").trim();
 
 const enabled = Boolean(ACCOUNT_ID && API_TOKEN && DATABASE_ID);
 
 const API_URL = enabled
   ? `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/d1/database/${DATABASE_ID}/query`
   : null;
+
+if (enabled) {
+  console.log(
+    `D1 config -- account_id: "${ACCOUNT_ID}" (len ${ACCOUNT_ID.length}), ` +
+    `database_id: "${DATABASE_ID}" (len ${DATABASE_ID.length}), ` +
+    `token length: ${API_TOKEN.length}, url: ${API_URL}`
+  );
+}
 
 async function query(sql, params = []) {
   if (!enabled) return null;
