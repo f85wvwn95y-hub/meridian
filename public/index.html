@@ -65,6 +65,7 @@
     <h1>Meridian</h1>
     <div class="tagline">Race the Dawn &mdash; the sun never sets on the game.</div>
     <div class="stat"><span>Player</span><b id="statName">-</b></div>
+    <div class="stat"><span>Guild</span><b id="statGuild">-</b></div>
     <div class="stat"><span>Lumen</span><b id="statLumen">0</b></div>
     <div class="stat"><span>Cells held</span><b id="statCells">0</b></div>
     <div class="stat"><span>Players online</span><b id="statOnline">0</b></div>
@@ -72,10 +73,13 @@
       <div><span class="dot" style="background:#ffd35c"></span>Rush zone (dawn/dusk): 3x income, half-price attacks</div>
       <div><span class="dot" style="background:#5cc9ff"></span>Daylight: steady income</div>
       <div><span class="dot" style="background:#2a3348"></span>Night: slow income</div>
+      <div>Guildmates can't attack each other's territory.</div>
     </div>
     <div id="leaderboard">
       <h2>Leaderboard</h2>
       <div id="lbRows"></div>
+      <h2>Top Guilds</h2>
+      <div id="guildRows"></div>
     </div>
   </div>
 </div>
@@ -85,6 +89,7 @@
     <h1>Meridian</h1>
     <div class="tagline">Claim territory. Follow the dawn. Never miss a rush.</div>
     <input id="nameInput" maxlength="20" placeholder="Pick a name" autofocus />
+    <input id="guildInput" maxlength="6" placeholder="Guild tag (optional)" />
     <button id="joinBtn">Enter the world</button>
   </div>
 </div>

@@ -19,20 +19,29 @@ const PALETTE = [
 ];
 
 // ---- world state ----
-const cells = new Map(); // id -> { ownerId, ownerName, color, defense, illum }
+const cells = new Map(); // id -> { ownerId, ownerName, color, defense, guild, illum }
 for (const id of allCellIds()) {
-  cells.set(id, { ownerId: null, ownerName: null, color: null, defense: 0, illum: "night" });
+  cells.set(id, { ownerId: null, ownerName: null, color: null, defense: 0, guild: null, illum: "night" });
 }
 
 const players = new Map(); // ws -> player
 let nextColor = 0;
 let playerSeq = 1;
 
+const MAX_GUILD_LEN = 6;
+function sanitizeGuild(raw) {
+  if (!raw) return null;
+  const cleaned = String(raw).trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, MAX_GUILD_LEN);
+  return cleaned.length > 0 ? cleaned : null;
+}
+
 /** Gathers every currently-owned cell in the shape persistence.saveCells expects. */
 function ownedCellsSnapshot() {
   const out = [];
   for (const [id, c] of cells.entries()) {
-    if (c.ownerName) out.push({ id, ownerName: c.ownerName, color: c.color, defense: c.defense });
+    if (c.ownerName) {
+      out.push({ id, ownerName: c.ownerName, color: c.color, defense: c.defense, guild: c.guild });
+    }
   }
   return out;
 }
@@ -59,24 +68,50 @@ function incomeFor(illum) {
   return 0.3;
 }
 
-function claimCost(cell, illum) {
+// Returns Infinity to signal "can't be claimed" (e.g. attacking a guildmate).
+function claimCost(cell, illum, attackerGuild) {
   // Ownership survives restarts via ownerName even when no live player (ownerId)
   // is currently connected to that identity, so cost is based on ownerName.
   if (!cell.ownerName) return BASE_CLAIM_COST;
+  if (cell.guild && attackerGuild && cell.guild === attackerGuild) return Infinity;
   const attackCost = BASE_CLAIM_COST + cell.defense;
   return illum === "rush" ? attackCost * 0.5 : attackCost;
 }
 
 function leaderboard() {
   return [...players.values()]
-    .map((p) => ({ name: p.name, color: p.color, lumen: Math.round(p.lumen), cellCount: p.cellCount }))
+    .map((p) => ({ name: p.name, color: p.color, guild: p.guild, lumen: Math.round(p.lumen), cellCount: p.cellCount }))
     .sort((a, b) => b.lumen - a.lumen)
+    .slice(0, 10);
+}
+
+/** Ranks guilds by total territory currently held (persists across restarts,
+ * since it's derived from cell ownership rather than who's online). */
+function guildLeaderboard() {
+  const totals = new Map(); // guild -> { cellCount, totalDefense }
+  for (const c of cells.values()) {
+    if (!c.guild) continue;
+    const t = totals.get(c.guild) || { cellCount: 0, totalDefense: 0 };
+    t.cellCount += 1;
+    t.totalDefense += c.defense;
+    totals.set(c.guild, t);
+  }
+  return [...totals.entries()]
+    .map(([guild, t]) => ({ guild, cellCount: t.cellCount, totalDefense: Math.round(t.totalDefense) }))
+    .sort((a, b) => b.cellCount - a.cellCount)
     .slice(0, 10);
 }
 
 function publicCell(id) {
   const c = cells.get(id);
-  return { id, ownerName: c.ownerName, color: c.color, defense: Math.round(c.defense), illum: c.illum };
+  return {
+    id,
+    ownerName: c.ownerName,
+    color: c.color,
+    defense: Math.round(c.defense),
+    guild: c.guild,
+    illum: c.illum,
+  };
 }
 
 function broadcast(obj) {
@@ -123,6 +158,7 @@ function startTicking() {
       subsolar,
       changed: changedIds.map(publicCell),
       leaderboard: leaderboard(),
+      guildLeaderboard: guildLeaderboard(),
       playerCount: players.size,
       serverTimeUTC: new Date(now).toISOString(),
     });
@@ -153,6 +189,7 @@ async function main() {
       cell.ownerName = saved.ownerName;
       cell.color = saved.color;
       cell.defense = saved.defense;
+      cell.guild = saved.guild || null;
     }
   }
 
@@ -189,9 +226,11 @@ wss.on("connection", (ws) => {
 
     if (msg.type === "join") {
       const name = String(msg.name || "Wanderer").slice(0, 20);
+      const guild = sanitizeGuild(msg.guild);
       const player = {
         id: playerSeq++,
         name,
+        guild,
         color: assignColor(),
         lumen: 20,
         cellCount: 0,
@@ -204,9 +243,15 @@ wss.on("connection", (ws) => {
         cells: allCellIds().map(publicCell),
         subsolar: subsolarPoint(new Date()),
         leaderboard: leaderboard(),
+        guildLeaderboard: guildLeaderboard(),
         playerCount: players.size,
       });
-      broadcast({ type: "leaderboard", leaderboard: leaderboard(), playerCount: players.size });
+      broadcast({
+        type: "leaderboard",
+        leaderboard: leaderboard(),
+        guildLeaderboard: guildLeaderboard(),
+        playerCount: players.size,
+      });
       return;
     }
 
@@ -217,7 +262,11 @@ wss.on("connection", (ws) => {
       const id = Number(msg.cellId);
       const cell = cells.get(id);
       if (!cell || cell.ownerId === player.id) return;
-      const cost = claimCost(cell, cell.illum);
+      const cost = claimCost(cell, cell.illum, player.guild);
+      if (!Number.isFinite(cost)) {
+        send(ws, { type: "error", message: "Can't attack a guildmate's territory." });
+        return;
+      }
       if (player.lumen < cost) {
         send(ws, { type: "error", message: "Not enough Lumen." });
         return;
@@ -231,15 +280,23 @@ wss.on("connection", (ws) => {
       cell.ownerName = player.name;
       cell.color = player.color;
       cell.defense = 0;
+      cell.guild = player.guild;
       player.cellCount += 1;
 
       broadcast({ type: "cellUpdate", cell: publicCell(id) });
-      broadcast({ type: "leaderboard", leaderboard: leaderboard(), playerCount: players.size });
+      broadcast({
+        type: "leaderboard",
+        leaderboard: leaderboard(),
+        guildLeaderboard: guildLeaderboard(),
+        playerCount: players.size,
+      });
       send(ws, { type: "you", you: { ...player } });
 
       // Best-effort immediate save so a claim survives even a restart moments later.
       persistence
-        .saveCells([{ id, ownerName: cell.ownerName, color: cell.color, defense: cell.defense }])
+        .saveCells([
+          { id, ownerName: cell.ownerName, color: cell.color, defense: cell.defense, guild: cell.guild },
+        ])
         .catch((err) => console.error("Claim save failed:", err.message));
     }
   });
@@ -248,7 +305,12 @@ wss.on("connection", (ws) => {
     const player = players.get(ws);
     players.delete(ws);
     if (player) {
-      broadcast({ type: "leaderboard", leaderboard: leaderboard(), playerCount: players.size });
+      broadcast({
+        type: "leaderboard",
+        leaderboard: leaderboard(),
+        guildLeaderboard: guildLeaderboard(),
+        playerCount: players.size,
+      });
     }
   });
 });

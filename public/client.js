@@ -92,6 +92,10 @@
         ctx.lineWidth = 1.2;
         ctx.strokeRect(x0 + 0.5, y0 + 0.5, x1 - x0 - 1, y1 - y0 - 1);
       }
+      if (c.guild) {
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(x0 + 2, y0 + 2, 3, 3);
+      }
       if (id === hoveredId) {
         ctx.strokeStyle = "#ffffff";
         ctx.lineWidth = 1.5;
@@ -120,28 +124,40 @@
   function updateStats() {
     if (!me) return;
     document.getElementById("statName").textContent = me.name;
+    document.getElementById("statGuild").textContent = me.guild || "none";
     document.getElementById("statLumen").textContent = Math.round(me.lumen);
     document.getElementById("statCells").textContent = me.cellCount;
   }
 
   function renderLeaderboard(lb) {
     const rows = lb
-      .map(
-        (p) => `<div class="lb-row"><span class="swatch" style="background:${p.color}"></span>
-        <span class="lb-name">${escapeHtml(p.name)}</span><span>${Math.round(p.lumen)}</span></div>`
-      )
+      .map((p) => {
+        const tag = p.guild ? ` <span style="color:#8993ad">[${escapeHtml(p.guild)}]</span>` : "";
+        return `<div class="lb-row"><span class="swatch" style="background:${p.color}"></span>
+        <span class="lb-name">${escapeHtml(p.name)}${tag}</span><span>${Math.round(p.lumen)}</span></div>`;
+      })
       .join("");
     document.getElementById("lbRows").innerHTML = rows;
+  }
+
+  function renderGuildLeaderboard(gl) {
+    const rows = (gl || [])
+      .map(
+        (g) => `<div class="lb-row">
+        <span class="lb-name">[${escapeHtml(g.guild)}]</span><span>${g.cellCount} cells</span></div>`
+      )
+      .join("");
+    document.getElementById("guildRows").innerHTML = rows || `<div class="lb-row" style="color:#8993ad">No guilds yet</div>`;
   }
 
   function escapeHtml(s) {
     return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   }
 
-  function connect(name) {
+  function connect(name, guild) {
     const proto = location.protocol === "https:" ? "wss" : "ws";
     ws = new WebSocket(`${proto}://${location.host}`);
-    ws.onopen = () => ws.send(JSON.stringify({ type: "join", name }));
+    ws.onopen = () => ws.send(JSON.stringify({ type: "join", name, guild }));
     ws.onmessage = (ev) => {
       const msg = JSON.parse(ev.data);
       if (msg.type === "welcome") {
@@ -152,6 +168,7 @@
         subsolar = msg.subsolar;
         me = msg.you;
         renderLeaderboard(msg.leaderboard);
+        renderGuildLeaderboard(msg.guildLeaderboard);
         document.getElementById("statOnline").textContent = msg.playerCount;
         updateStats();
         draw();
@@ -159,6 +176,7 @@
         subsolar = msg.subsolar;
         for (const c of msg.changed) cellState.set(c.id, c);
         renderLeaderboard(msg.leaderboard);
+        renderGuildLeaderboard(msg.guildLeaderboard);
         document.getElementById("statOnline").textContent = msg.playerCount;
         clockEl.textContent = "UTC " + msg.serverTimeUTC.slice(11, 19);
         draw();
@@ -170,6 +188,7 @@
         updateStats();
       } else if (msg.type === "leaderboard") {
         renderLeaderboard(msg.leaderboard);
+        renderGuildLeaderboard(msg.guildLeaderboard);
         document.getElementById("statOnline").textContent = msg.playerCount;
       } else if (msg.type === "error") {
         showToast(msg.message);
@@ -184,7 +203,7 @@
     hoveredId = cellIdFromLonLat(lon, lat);
     const c = cellState.get(hoveredId);
     if (c) {
-      const owner = c.color ? c.ownerName : "unclaimed";
+      const owner = c.color ? c.ownerName + (c.guild ? ` [${c.guild}]` : "") : "unclaimed";
       hoverEl.textContent = `${lat.toFixed(1)}°, ${lon.toFixed(1)}° — ${owner} — ${c.illum} — defense ${c.defense}`;
     }
     draw();
@@ -209,10 +228,14 @@
   document.getElementById("nameInput").addEventListener("keydown", (e) => {
     if (e.key === "Enter") enter();
   });
+  document.getElementById("guildInput").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") enter();
+  });
   function enter() {
     const name = document.getElementById("nameInput").value.trim() || "Wanderer";
+    const guild = document.getElementById("guildInput").value.trim();
     document.getElementById("joinModal").remove();
-    connect(name);
+    connect(name, guild);
   }
 
   resize();

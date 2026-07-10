@@ -7,5 +7,6 @@ CREATE TABLE IF NOT EXISTS cells (
   owner_name TEXT,
   color TEXT,
   defense REAL NOT NULL DEFAULT 0,
+  guild TEXT,
   updated_at INTEGER NOT NULL DEFAULT 0
 );

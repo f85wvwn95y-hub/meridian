@@ -34,7 +34,7 @@ async function query(sql, params = []) {
   return json.results ?? [];
 }
 
-/** Returns a Map<id, {ownerName, color, defense}> of every persisted owned cell. */
+/** Returns a Map<id, {ownerName, color, defense, guild}> of every persisted owned cell. */
 async function loadAllCells() {
   if (!enabled) {
     console.log("Persistence disabled (no D1_PROXY_URL/D1_PROXY_SECRET) -- starting fresh.");
@@ -42,11 +42,16 @@ async function loadAllCells() {
   }
   try {
     const rows = await query(
-      "SELECT id, owner_name, color, defense FROM cells WHERE owner_name IS NOT NULL"
+      "SELECT id, owner_name, color, defense, guild FROM cells WHERE owner_name IS NOT NULL"
     );
     const map = new Map();
     for (const row of rows || []) {
-      map.set(row.id, { ownerName: row.owner_name, color: row.color, defense: row.defense });
+      map.set(row.id, {
+        ownerName: row.owner_name,
+        color: row.color,
+        defense: row.defense,
+        guild: row.guild || null,
+      });
     }
     console.log(`Loaded ${map.size} owned cells from D1.`);
     return map;
@@ -56,24 +61,25 @@ async function loadAllCells() {
   }
 }
 
-/** Batch-upsert a list of {id, ownerName, color, defense} cells. */
+/** Batch-upsert a list of {id, ownerName, color, defense, guild} cells. */
 async function saveCells(cellList) {
   if (!enabled || cellList.length === 0) return;
   const now = Date.now();
   // D1 supports multi-row INSERT ... ON CONFLICT in a single statement.
-  const placeholders = cellList.map(() => "(?, ?, ?, ?, ?)").join(", ");
+  const placeholders = cellList.map(() => "(?, ?, ?, ?, ?, ?)").join(", ");
   const sql = `
-    INSERT INTO cells (id, owner_name, color, defense, updated_at)
+    INSERT INTO cells (id, owner_name, color, defense, guild, updated_at)
     VALUES ${placeholders}
     ON CONFLICT(id) DO UPDATE SET
       owner_name = excluded.owner_name,
       color = excluded.color,
       defense = excluded.defense,
+      guild = excluded.guild,
       updated_at = excluded.updated_at
   `;
   const params = [];
   for (const c of cellList) {
-    params.push(c.id, c.ownerName, c.color, c.defense, now);
+    params.push(c.id, c.ownerName, c.color, c.defense, c.guild || null, now);
   }
   try {
     await query(sql, params);
