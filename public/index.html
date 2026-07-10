@@ -4,6 +4,17 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
 <title>Meridian: Race the Dawn</title>
+<meta name="description" content="Claim territory as the real day/night line sweeps across the globe. A free, real-time multiplayer strategy game -- play with people around the world, right now." />
+<meta property="og:title" content="Meridian: Race the Dawn" />
+<meta property="og:description" content="Claim territory as the real day/night line sweeps across the globe. A free, real-time multiplayer strategy game -- play with people around the world, right now." />
+<meta property="og:type" content="website" />
+<meta property="og:image" content="/og-image.png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Meridian: Race the Dawn" />
+<meta name="twitter:description" content="Claim territory as the real day/night line sweeps across the globe. Play with people around the world, right now." />
+<meta name="twitter:image" content="/og-image.png" />
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -106,6 +117,31 @@
   #seasonInfoLine { font-size: 11px; color: #8993ad; margin-bottom: 4px; }
   .hof-entry { font-size: 12px; padding: 3px 0; color: #b3bad0; }
 
+  #helpBtn {
+    position: absolute; top: 12px; right: 16px; width: 30px; height: 30px; border-radius: 50%;
+    border: 1px solid #2a3348; background: rgba(5,7,13,0.6); color: #e8ecf4; font-weight: 700;
+    cursor: pointer; font-size: 14px; display: none; align-items: center; justify-content: center;
+  }
+  #tutorialOverlay {
+    position: fixed; inset: 0; background: rgba(2,4,10,0.88); display: none;
+    align-items: center; justify-content: center; z-index: 20;
+  }
+  #tutorialBox {
+    background: #10151f; border: 1px solid #232b3d; border-radius: 12px; padding: 28px 30px;
+    width: min(420px, 90vw); text-align: left;
+  }
+  #tutorialBox h1 { font-size: 20px; margin: 0 0 14px; }
+  .tutorial-step { display: flex; gap: 12px; margin-bottom: 14px; align-items: flex-start; }
+  .tutorial-step .num {
+    flex-shrink: 0; width: 24px; height: 24px; border-radius: 50%; background: #ffd35c; color: #111;
+    font-weight: 800; font-size: 13px; display: flex; align-items: center; justify-content: center;
+  }
+  .tutorial-step p { margin: 0; font-size: 14px; color: #d7dcec; }
+  #tutorialDone {
+    width: 100%; padding: 11px; margin-top: 6px; border-radius: 6px; border: none; background: #ffd35c;
+    color: #111; font-weight: 700; font-size: 14px; cursor: pointer;
+  }
+
   /* ---- Mobile layout: sidebar becomes a slide-up bottom sheet ---- */
   @media (max-width: 760px), (pointer: coarse) and (max-width: 900px) {
     #app { flex-direction: column; }
@@ -141,6 +177,7 @@
     <div id="hover">Click a cell to claim it</div>
     <div id="eventBanner"></div>
     <div id="toast"></div>
+    <button id="helpBtn" title="How to play">?</button>
     <button id="sidebarToggle">Lumen: <span id="toggleLumen">0</span> &middot; Stats &uarr;</button>
   </div>
   <div id="sidebar">
@@ -151,6 +188,10 @@
     <div class="stat"><span>Lumen</span><b id="statLumen">0</b></div>
     <div class="stat"><span>Cells held</span><b id="statCells">0</b></div>
     <div class="stat"><span>Players online</span><b id="statOnline">0</b></div>
+    <div id="shareRow" style="display:flex; gap:6px; margin-top:10px;">
+      <button id="inviteBtn" class="abilityBtn" style="flex:1">Invite a Friend</button>
+      <button id="shareXBtn" class="abilityBtn" style="flex:1">Share on X</button>
+    </div>
     <div id="legend">
       <div><span class="dot" style="background:#ffd35c"></span>Rush zone (dawn/dusk): 3x income, half-price attacks</div>
       <div><span class="dot" style="background:#5cc9ff"></span>Daylight: steady income</div>
@@ -173,6 +214,7 @@
       <h2>Season</h2>
       <div id="seasonInfoLine">Season 1</div>
       <div id="hofRows"></div>
+      <button id="shareSeasonBtn" class="abilityBtn" style="width:100%; margin-top:6px; display:none">Share Season Result</button>
     </div>
 
     <div id="guildWarsSection" style="display:none">
@@ -182,6 +224,7 @@
         <input id="warTargetInput" maxlength="6" placeholder="Rival guild tag" />
         <button id="warDeclareBtn">Declare War</button>
       </div>
+      <button id="shareWarBtn" class="abilityBtn" style="width:100%; margin-top:6px; display:none">Share War Result</button>
     </div>
 
     <div id="guildChatSection" style="display:none">
@@ -233,6 +276,17 @@
     </div>
 
     <div id="authError"></div>
+  </div>
+</div>
+
+<div id="tutorialOverlay">
+  <div id="tutorialBox">
+    <h1>How to play Meridian</h1>
+    <div class="tutorial-step"><span class="num">1</span><p>Click any unclaimed cell to claim it with Lumen. Click a cell you already own to fortify it -- more defense makes it harder to steal.</p></div>
+    <div class="tutorial-step"><span class="num">2</span><p>Follow the dawn: gold rush zones triple your income and halve attack costs. The band sweeps the globe with the real sun.</p></div>
+    <div class="tutorial-step"><span class="num">3</span><p>Join a guild to chat, share protection from your own members, and declare wars against rivals for bragging rights and Lumen rewards.</p></div>
+    <div class="tutorial-step"><span class="num">4</span><p>Spend Lumen on Shield, Overcharge, and Siege abilities for tactical plays beyond just clicking cells.</p></div>
+    <button id="tutorialDone">Got it, let's play</button>
   </div>
 </div>
 

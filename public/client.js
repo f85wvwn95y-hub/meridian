@@ -197,6 +197,7 @@
       })
       .join("");
     document.getElementById("hofRows").innerHTML = rows || `<div class="hof-entry" style="color:#8993ad">No seasons completed yet</div>`;
+    document.getElementById("shareSeasonBtn").style.display = recentSeasons.length > 0 ? "block" : "none";
   }
 
   function renderGuildChat() {
@@ -226,6 +227,7 @@
       })
       .join("");
     document.getElementById("warRows").innerHTML = rows + resultRows || `<div class="hof-entry" style="color:#8993ad">No active wars</div>`;
+    document.getElementById("shareWarBtn").style.display = recentWarResults.length > 0 ? "block" : "none";
   }
 
   function updateGuildSectionsVisibility() {
@@ -262,6 +264,22 @@
     return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   }
 
+  function shareOrCopy(text, url) {
+    if (navigator.share) {
+      navigator.share({ title: "Meridian: Race the Dawn", text, url }).catch(() => {});
+      return;
+    }
+    const fullText = url ? `${text} ${url}` : text;
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(fullText).then(
+        () => showToast("Copied to clipboard!"),
+        () => showToast(fullText)
+      );
+    } else {
+      showToast(fullText);
+    }
+  }
+
   function connect(joinMsg) {
     const proto = location.protocol === "https:" ? "wss" : "ws";
     ws = new WebSocket(`${proto}://${location.host}`);
@@ -295,6 +313,8 @@
         document.getElementById("statOnline").textContent = msg.playerCount;
         updateStats();
         draw();
+        document.getElementById("helpBtn").style.display = "flex";
+        if (!localStorage.getItem("meridianSeenTutorial")) showTutorial();
       } else if (msg.type === "tick") {
         subsolar = msg.subsolar;
         for (const c of msg.changed) cellState.set(c.id, c);
@@ -460,6 +480,42 @@
     if (!targetGuild || !ws || ws.readyState !== WebSocket.OPEN) return;
     ws.send(JSON.stringify({ type: "declareWar", targetGuild }));
     input.value = "";
+  });
+
+  document.getElementById("inviteBtn").addEventListener("click", () => {
+    shareOrCopy("Join me in Meridian: Race the Dawn -- claim territory as the real day/night line sweeps the globe.", location.href);
+  });
+  document.getElementById("shareXBtn").addEventListener("click", () => {
+    const text = encodeURIComponent("Claiming territory along the real day/night line in Meridian: Race the Dawn.");
+    const url = encodeURIComponent(location.href);
+    window.open(`https://twitter.com/intent/tweet?text=${text}&url=${url}`, "_blank", "noopener");
+  });
+
+  document.getElementById("shareSeasonBtn").addEventListener("click", () => {
+    if (!recentSeasons[0]) return;
+    const s = recentSeasons[0];
+    const top = s.topPlayers && s.topPlayers[0];
+    const text = top
+      ? `Meridian Season ${s.seasonNumber} is complete! Top player: ${top.name} with ${Math.round(top.seasonLumen)} Lumen.`
+      : `Meridian Season ${s.seasonNumber} is complete!`;
+    shareOrCopy(text, location.href);
+  });
+  function showTutorial() {
+    document.getElementById("tutorialOverlay").style.display = "flex";
+  }
+  function hideTutorial() {
+    document.getElementById("tutorialOverlay").style.display = "none";
+    localStorage.setItem("meridianSeenTutorial", "1");
+  }
+  document.getElementById("tutorialDone").addEventListener("click", hideTutorial);
+  document.getElementById("helpBtn").addEventListener("click", showTutorial);
+
+  document.getElementById("shareWarBtn").addEventListener("click", () => {
+    if (!recentWarResults[0]) return;
+    const r = recentWarResults[0];
+    const outcome = r.winner ? `[${r.winner}] won` : "It ended in a draw";
+    const text = `Guild war: [${r.guildA}] ${r.scoreA}-${r.scoreB} [${r.guildB}] -- ${outcome} in Meridian: Race the Dawn.`;
+    shareOrCopy(text, location.href);
   });
 
   fetch("land.json")

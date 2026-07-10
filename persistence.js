@@ -199,6 +199,39 @@ async function getRecentSeasons(limit = 5) {
   }
 }
 
+/** Upserts one day's aggregate, privacy-respecting usage stats (no player-identifying data). */
+async function upsertDailyStats(date, { peakPlayers, totalClaims, newAccounts }) {
+  if (!enabled) return;
+  try {
+    await query(
+      `INSERT INTO daily_stats (date, peak_players, total_claims, new_accounts, updated_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(date) DO UPDATE SET
+         peak_players = excluded.peak_players,
+         total_claims = excluded.total_claims,
+         new_accounts = excluded.new_accounts,
+         updated_at = excluded.updated_at`,
+      [date, peakPlayers, totalClaims, newAccounts, Date.now()]
+    );
+  } catch (err) {
+    console.error("D1 daily_stats save failed:", err.message);
+  }
+}
+
+/** Returns the most recent N days of aggregate stats, newest first. */
+async function getDailyStats(days = 14) {
+  if (!enabled) return [];
+  try {
+    const rows = await query("SELECT date, peak_players, total_claims, new_accounts FROM daily_stats ORDER BY date DESC LIMIT ?", [days]);
+    return (rows || []).map((r) => ({
+      date: r.date, peakPlayers: r.peak_players, totalClaims: r.total_claims, newAccounts: r.new_accounts,
+    }));
+  } catch (err) {
+    console.error("D1 daily_stats load failed:", err.message);
+    return [];
+  }
+}
+
 module.exports = {
   enabled,
   loadAllCells,
@@ -211,4 +244,6 @@ module.exports = {
   archiveSeason,
   resetAllSeasonLumen,
   getRecentSeasons,
+  upsertDailyStats,
+  getDailyStats,
 };

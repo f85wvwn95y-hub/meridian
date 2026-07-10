@@ -1,3 +1,4 @@
+const crypto = require("crypto");
 const path = require("path");
 const express = require("express");
 const { WebSocketServer } = require("ws");
@@ -42,6 +43,16 @@ const SEASON_DURATION_MS = 30 * 24 * 60 * 60 * 1000; // 30 real days
 // ---- guild wars ----
 const WAR_DURATION_MS = 24 * 60 * 60 * 1000; // 24 real hours
 const WAR_VICTORY_REWARD = 100; // Lumen bonus to each online winning-guild member
+
+// ---- lightweight, privacy-respecting usage stats (no player-identifying data) ----
+const ADMIN_STATS_KEY = process.env.ADMIN_STATS_KEY || crypto.randomBytes(16).toString("hex");
+if (!process.env.ADMIN_STATS_KEY) {
+  console.log(`ADMIN_STATS_KEY not set -- using a random key for this run: ${ADMIN_STATS_KEY} (set a stable one in Render's env vars to keep /stats accessible across restarts)`);
+}
+function todayStr() {
+  return new Date().toISOString().slice(0, 10); // YYYY-MM-DD (UTC)
+}
+let statsToday = { date: todayStr(), peakPlayers: 0, totalClaims: 0, newAccounts: 0 };
 
 // Fortifying gets pricier the more defense a cell already has, so turtling
 // an already-strong cell into a near-unbreakable one costs real investment.
@@ -127,6 +138,21 @@ async function flushToDisk() {
     .filter((p) => p.kind === "account")
     .map((p) => persistence.saveUserState(p.userId, { lumen: p.lumen, guild: p.guild, seasonLumen: p.seasonLumen }));
   await Promise.all(accountSaves);
+
+  await persistence.upsertDailyStats(statsToday.date, statsToday);
+}
+
+/** Rolls statsToday over to a fresh day if the UTC date has changed, persisting the finished day first. */
+async function maybeRolloverDailyStats() {
+  const today = todayStr();
+  if (today === statsToday.date) return;
+  const finished = statsToday;
+  statsToday = { date: today, peakPlayers: players.size, totalClaims: 0, newAccounts: 0 };
+  try {
+    await persistence.upsertDailyStats(finished.date, finished);
+  } catch (err) {
+    console.error("Daily stats rollover save failed:", err.message);
+  }
 }
 
 function assignColor() {
@@ -313,6 +339,8 @@ function startTicking() {
     }
 
     resolveExpiredWars(now);
+    maybeRolloverDailyStats().catch((err) => console.error("Daily stats rollover failed:", err.message));
+    if (players.size > statsToday.peakPlayers) statsToday.peakPlayers = players.size;
 
     broadcast({
       type: "tick",
@@ -343,6 +371,15 @@ function startTicking() {
 // ---- websocket handling ----
 const app = express();
 app.get("/health", (req, res) => res.status(200).send("ok")); // for uptime pingers -- cheap, no static file read
+app.get("/stats", async (req, res) => {
+  if (req.query.key !== ADMIN_STATS_KEY) return res.status(403).send("forbidden");
+  const recentDays = await persistence.getDailyStats(30);
+  res.json({
+    now: { playersOnline: players.size, activeGuildWars: wars.size, seasonNumber, seasonStartedAt },
+    today: statsToday,
+    recentDays,
+  });
+});
 app.use(express.static(path.join(__dirname, "public")));
 let server;
 let wss;
@@ -367,6 +404,13 @@ async function main() {
     recentSeasons = await persistence.getRecentSeasons(5);
   } catch (err) {
     console.error("Season state load failed, starting fresh:", err.message);
+  }
+
+  try {
+    const [savedToday] = await persistence.getDailyStats(1);
+    if (savedToday && savedToday.date === todayStr()) statsToday = savedToday;
+  } catch (err) {
+    console.error("Daily stats load failed, starting fresh:", err.message);
   }
 
   server = app.listen(PORT, () => {
@@ -515,6 +559,7 @@ wss.on("connection", (ws, req) => {
           send(ws, { type: "error", message: "That username is already taken." });
           return;
         }
+        statsToday.newAccounts += 1;
         const token = auth.signToken({ uid: userId, username });
         const player = {
           kind: "account",
@@ -782,6 +827,7 @@ wss.on("connection", (ws, req) => {
         cell.siegedUntil = 0; // a fresh capture clears any lingering siege debuff
         cell.shieldUntil = 0;
         player.cellCount += 1;
+        statsToday.totalClaims += 1;
 
         // A capture that flips territory between two warring guilds counts toward that war's score.
         if (prevGuild && player.guild && prevGuild !== player.guild) {
