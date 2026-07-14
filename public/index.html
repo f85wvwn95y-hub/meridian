@@ -4,6 +4,9 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
 <title>Meridian: Race the Dawn</title>
+<link rel="icon" type="image/png" href="/favicon.png" />
+<link rel="icon" type="image/x-icon" href="/favicon.ico" />
+<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
 <meta name="description" content="Claim territory as the real day/night line sweeps across the globe. A free, real-time multiplayer strategy game -- play with people around the world, right now." />
 <meta property="og:title" content="Meridian: Race the Dawn" />
 <meta property="og:description" content="Claim territory as the real day/night line sweeps across the globe. A free, real-time multiplayer strategy game -- play with people around the world, right now." />
@@ -95,6 +98,9 @@
   .authPane { display: none; }
   .authPane.active { display: block; }
   #authError { color: #ff8f8f; font-size: 12px; min-height: 16px; margin-top: 4px; }
+  #joinFooter { margin-top: 14px; font-size: 11px; color: #556; text-align: center; line-height: 1.5; }
+  #joinFooter a { color: #7c8399; text-decoration: underline; }
+  #joinFooter a:hover { color: #ffd35c; }
   #toast {
     position: absolute; bottom: 16px; left: 16px; background: #1a0e0e; border: 1px solid #ff5c5c;
     color: #ffbcbc; padding: 8px 14px; border-radius: 6px; font-size: 13px; opacity: 0; transition: opacity 0.3s;
@@ -177,6 +183,12 @@
     border: 1px solid #2a3348; background: rgba(5,7,13,0.6); color: #e8ecf4; font-weight: 700;
     cursor: pointer; font-size: 14px; display: none; align-items: center; justify-content: center;
   }
+  #soundBtn {
+    position: absolute; top: 12px; right: 54px; width: 30px; height: 30px; border-radius: 50%;
+    border: 1px solid #2a3348; background: rgba(5,7,13,0.6); color: #e8ecf4;
+    cursor: pointer; font-size: 13px; display: none; align-items: center; justify-content: center;
+  }
+  #soundBtn.muted { color: #556; }
   #tutorialOverlay {
     position: fixed; inset: 0; background: rgba(2,4,10,0.88); display: none;
     align-items: center; justify-content: center; z-index: 20;
@@ -233,6 +245,7 @@
     <div id="eventBanner"></div>
     <div id="toast"></div>
     <button id="helpBtn" title="How to play">?</button>
+    <button id="soundBtn" title="Toggle sound">&#128266;</button>
     <button id="sidebarToggle">Lumen: <span id="toggleLumen">0</span> &middot; Stats &uarr;</button>
   </div>
   <div id="sidebar">
@@ -253,6 +266,9 @@
       <div><span class="dot" style="background:#2a3348"></span>Night: slow income</div>
       <div>Guildmates can't attack each other's territory.</div>
       <div>Click your own cell to fortify it (spend Lumen to raise defense).</div>
+      <label style="display:flex; align-items:center; gap:6px; margin-top:8px; cursor:pointer;">
+        <input type="checkbox" id="colorblindToggle" /> Colorblind-friendly patterns
+      </label>
     </div>
 
     <div id="abilities">
@@ -316,6 +332,14 @@
       <h2>All-Time Leaderboard</h2>
       <div id="allTimeRows"></div>
     </div>
+
+    <div id="siteFooter">
+      <a href="/privacy.html" target="_blank" rel="noopener">Privacy</a>
+      <span>&middot;</span>
+      <a href="/terms.html" target="_blank" rel="noopener">Terms</a>
+      <span>&middot;</span>
+      <a href="mailto:support@lietastudios.com">Contact</a>
+    </div>
   </div>
 </div>
 
@@ -350,6 +374,11 @@
     </div>
 
     <div id="authError"></div>
+
+    <div id="joinFooter">
+      By playing, you agree to the <a href="/terms.html" target="_blank" rel="noopener">Terms</a>
+      and <a href="/privacy.html" target="_blank" rel="noopener">Privacy Policy</a>.
+    </div>
   </div>
 </div>
 

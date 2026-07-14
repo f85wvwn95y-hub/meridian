@@ -32,6 +32,43 @@
   let recentWarResults = [];
   let cosmeticsCfg = { baseColors: [], milestoneColors: [], supporterColors: [], founderColor: "#ffe066" };
 
+  // ---- lightweight synthesized sound effects (no audio files) ----
+  let audioCtx = null;
+  let muted = localStorage.getItem("meridianMuted") === "1";
+  function ensureAudio() {
+    if (audioCtx) return audioCtx;
+    try {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    } catch (e) {
+      audioCtx = null;
+    }
+    return audioCtx;
+  }
+  function playTone(freq, durationMs, type, volume, delayMs) {
+    if (muted) return;
+    const ctx = ensureAudio();
+    if (!ctx) return;
+    const start = ctx.currentTime + (delayMs || 0) / 1000;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = type || "sine";
+    osc.frequency.setValueAtTime(freq, start);
+    gain.gain.setValueAtTime(0, start);
+    gain.gain.linearRampToValueAtTime(volume || 0.15, start + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.001, start + durationMs / 1000);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(start);
+    osc.stop(start + durationMs / 1000 + 0.02);
+  }
+  const sfx = {
+    claim: () => { playTone(440, 70, "triangle", 0.15); playTone(660, 90, "triangle", 0.12, 60); },
+    fortify: () => playTone(220, 110, "square", 0.1),
+    ability: () => { playTone(700, 60, "sine", 0.14); playTone(420, 100, "sine", 0.12, 50); },
+    error: () => playTone(140, 130, "sawtooth", 0.1),
+    war: () => { playTone(300, 180, "sawtooth", 0.13); playTone(200, 220, "sawtooth", 0.1, 40); },
+  };
+
   function resize() {
     const wrap = document.getElementById("mapWrap");
     W = wrap.clientWidth;
@@ -77,6 +114,46 @@
     return owned ? "rgba(42,51,72,0.85)" : "rgba(20,24,36,0.5)";
   }
 
+  // ---- capture pulses: a brief expanding ring wherever territory changes hands ----
+  let pulses = [];
+  function addPulse(cellId, color) {
+    pulses.push({ id: cellId, color, startTime: performance.now() });
+    if (pulses.length === 1) requestAnimationFrame(pulseLoop);
+  }
+  function pulseLoop() {
+    const now = performance.now();
+    pulses = pulses.filter((p) => now - p.startTime < 600);
+    draw();
+    if (pulses.length > 0) requestAnimationFrame(pulseLoop);
+  }
+
+  // ---- colorblind-friendly mode: pattern overlays instead of relying on hue alone ----
+  let colorblindMode = localStorage.getItem("meridianColorblind") === "1";
+  function drawRelationPattern(x0, y0, x1, y1, relation) {
+    if (relation === "mine") return;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x0, y0, x1 - x0, y1 - y0);
+    ctx.clip();
+    ctx.strokeStyle = "rgba(255,255,255,0.55)";
+    ctx.lineWidth = 1;
+    const h = y1 - y0;
+    const step = 4;
+    for (let off = -h; off < x1 - x0; off += step) {
+      ctx.beginPath();
+      ctx.moveTo(x0 + off, y0);
+      ctx.lineTo(x0 + off + h, y1);
+      ctx.stroke();
+      if (relation === "enemy") {
+        ctx.beginPath();
+        ctx.moveTo(x1 - off, y0);
+        ctx.lineTo(x1 - off - h, y1);
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+
   function draw() {
     ctx.fillStyle = "#060911";
     ctx.fillRect(0, 0, W, H);
@@ -113,6 +190,13 @@
         ctx.fillStyle = "#ffffff";
         ctx.fillRect(x0 + 2, y0 + 2, 3, 3);
       }
+      if (colorblindMode && c.color) {
+        let relation = "mine";
+        if (!(me && c.ownerName === me.name)) {
+          relation = me && c.guild && c.guild === me.guild ? "guildmate" : "enemy";
+        }
+        drawRelationPattern(x0, y0, x1, y1, relation);
+      }
       if (c.shieldMsLeft > 0) {
         ctx.strokeStyle = "#5cffea";
         ctx.lineWidth = 2;
@@ -141,6 +225,22 @@
     ctx.strokeStyle = "#fff3c9";
     ctx.lineWidth = 2;
     ctx.stroke();
+
+    // capture pulses -- a brief expanding ring wherever territory just changed hands
+    const now = performance.now();
+    for (const p of pulses) {
+      const age = (now - p.startTime) / 600;
+      if (age >= 1) continue;
+      const { lon0, lat0, lon1, lat1 } = cellBounds(p.id);
+      const [px, py] = project((lon0 + lon1) / 2, (lat0 + lat1) / 2);
+      ctx.globalAlpha = 1 - age;
+      ctx.strokeStyle = p.color;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(px, py, 4 + age * 22, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
   }
 
   function showToast(msg) {
@@ -150,14 +250,40 @@
     showToast._t = setTimeout(() => (toastEl.style.opacity = "0"), 2200);
   }
 
+  let displayedLumen = null; // null until first set, so we don't animate up from 0 on initial load
+  let lumenAnimToken = 0;
+  function animateLumenTo(target) {
+    if (displayedLumen === null) {
+      displayedLumen = target;
+      document.getElementById("statLumen").textContent = Math.round(target);
+      const toggleLumen0 = document.getElementById("toggleLumen");
+      if (toggleLumen0) toggleLumen0.textContent = Math.round(target);
+      return;
+    }
+    const myToken = ++lumenAnimToken;
+    const startVal = displayedLumen;
+    const startTime = performance.now();
+    const duration = 400;
+    function step(now) {
+      if (myToken !== lumenAnimToken) return; // a newer animation superseded this one
+      const t = Math.min(1, (now - startTime) / duration);
+      const eased = 1 - Math.pow(1 - t, 3);
+      displayedLumen = startVal + (target - startVal) * eased;
+      document.getElementById("statLumen").textContent = Math.round(displayedLumen);
+      const toggleLumen = document.getElementById("toggleLumen");
+      if (toggleLumen) toggleLumen.textContent = Math.round(displayedLumen);
+      if (t < 1) requestAnimationFrame(step);
+      else displayedLumen = target;
+    }
+    requestAnimationFrame(step);
+  }
+
   function updateStats() {
     if (!me) return;
     document.getElementById("statName").textContent = me.name;
     document.getElementById("statGuild").textContent = me.guild || "none";
-    document.getElementById("statLumen").textContent = Math.round(me.lumen);
+    animateLumenTo(me.lumen);
     document.getElementById("statCells").textContent = me.cellCount;
-    const toggleLumen = document.getElementById("toggleLumen");
-    if (toggleLumen) toggleLumen.textContent = Math.round(me.lumen);
     updateGuildSectionsVisibility();
     updateAbilityButtons();
     renderCosmetics();
@@ -335,13 +461,51 @@
     }
   }
 
+  let lastJoinMsg = null;
+  let hasWelcomed = false;
+  let reconnectAttempts = 0;
+  let reconnectTimer = null;
+
+  function showReconnecting(attempt) {
+    const el = document.getElementById("eventBanner");
+    el.textContent = attempt > 1 ? `Reconnecting... (attempt ${attempt})` : "Connection lost -- reconnecting...";
+    el.style.display = "block";
+    el.style.borderColor = "#ff8f5c";
+    el.style.color = "#ffd0b0";
+  }
+  function hideReconnecting() {
+    // Only clear the banner if it's currently showing our reconnect message, not a real game event banner.
+    const el = document.getElementById("eventBanner");
+    if (el.textContent.startsWith("Reconnecting") || el.textContent.startsWith("Connection lost")) {
+      el.style.borderColor = "";
+      el.style.color = "";
+      renderEventBanner();
+    }
+  }
+
+  function scheduleReconnect() {
+    clearTimeout(reconnectTimer);
+    reconnectAttempts += 1;
+    showReconnecting(reconnectAttempts);
+    const delay = Math.min(16000, 1000 * Math.pow(2, reconnectAttempts - 1));
+    reconnectTimer = setTimeout(() => {
+      const token = localStorage.getItem("meridianToken");
+      connect(token ? { type: "resume", token } : lastJoinMsg);
+    }, delay);
+  }
+
   function connect(joinMsg) {
+    lastJoinMsg = joinMsg;
+    hasWelcomed = false;
     const proto = location.protocol === "https:" ? "wss" : "ws";
     ws = new WebSocket(`${proto}://${location.host}`);
     ws.onopen = () => ws.send(JSON.stringify(joinMsg));
     ws.onmessage = (ev) => {
       const msg = JSON.parse(ev.data);
       if (msg.type === "welcome") {
+        hasWelcomed = true;
+        reconnectAttempts = 0;
+        hideReconnecting();
         if (msg.token) localStorage.setItem("meridianToken", msg.token);
         const modal = document.getElementById("joinModal");
         if (modal) modal.remove();
@@ -371,6 +535,10 @@
         updateStats();
         draw();
         document.getElementById("helpBtn").style.display = "flex";
+        const soundBtnEl = document.getElementById("soundBtn");
+        soundBtnEl.style.display = "flex";
+        soundBtnEl.classList.toggle("muted", muted);
+        soundBtnEl.textContent = muted ? "\u{1F507}" : "\u{1F50A}";
         if (!localStorage.getItem("meridianSeenTutorial")) showTutorial();
         window.trackSignal("Player.Joined", { authMethod: joinMsg.type });
       } else if (msg.type === "tick") {
@@ -387,6 +555,12 @@
         renderSeasonInfo();
         draw();
       } else if (msg.type === "cellUpdate") {
+        const prev = cellState.get(msg.cell.id);
+        if (prev && prev.ownerName !== msg.cell.ownerName) {
+          const mine = me && msg.cell.ownerName === me.name;
+          const wasMine = me && prev.ownerName === me.name;
+          addPulse(msg.cell.id, mine ? "#5cffd3" : wasMine ? "#ff5c5c" : "#ffd35c");
+        }
         cellState.set(msg.cell.id, msg.cell);
         draw();
       } else if (msg.type === "you") {
@@ -415,6 +589,7 @@
           renderWars();
         }
         showToast(`War declared: [${msg.war.guildA}] vs [${msg.war.guildB}]!`);
+        sfx.war();
       } else if (msg.type === "warEnded") {
         myWars = myWars.filter((w) => !(w.guildA === msg.result.guildA && w.guildB === msg.result.guildB));
         recentWarResults.unshift(msg.result);
@@ -423,6 +598,7 @@
         if (me && (msg.result.guildA === me.guild || msg.result.guildB === me.guild)) {
           const outcome = msg.result.winner ? (msg.result.winner === me.guild ? "Your guild won!" : "Your guild lost.") : "The war ended in a draw.";
           showToast(`War over: [${msg.result.guildA}] ${msg.result.scoreA}-${msg.result.scoreB} [${msg.result.guildB}] — ${outcome}`);
+          sfx.war();
         }
       } else if (msg.type === "seasonEnd") {
         seasonInfo = { number: msg.seasonNumber, startedAt: msg.seasonStartedAt, durationMs: seasonInfo.durationMs };
@@ -441,11 +617,16 @@
           }
         } else {
           showToast(msg.message);
+          sfx.error();
         }
       }
     };
     ws.onclose = () => {
-      if (!document.getElementById("joinModal")) showToast("Disconnected from server.");
+      if (hasWelcomed && !document.getElementById("joinModal")) {
+        // We were mid-game -- this is an unexpected drop, so try to recover automatically
+        // rather than leaving the player stuck looking at a dead map.
+        scheduleReconnect();
+      }
     };
   }
 
@@ -481,6 +662,7 @@
     if (activeAbility) {
       ws.send(JSON.stringify({ type: "ability", ability: activeAbility, cellId: id }));
       window.trackSignal("Ability.Used", { ability: activeAbility });
+      sfx.ability();
       abilityCooldownUntil[activeAbility] = Date.now() + (abilityCfg.cooldownMs || 45000);
       activeAbility = null;
       document.getElementById("abilityHint").textContent =
@@ -488,6 +670,10 @@
       updateAbilityButtons();
       return;
     }
+
+    const targetCell = cellState.get(id);
+    if (me && targetCell && targetCell.ownerName === me.name) sfx.fortify();
+    else sfx.claim();
 
     ws.send(JSON.stringify({ type: "claim", cellId: id }));
     window.trackSignal("Cell.Clicked");
@@ -514,6 +700,7 @@
       if (kind === "overcharge") {
         ws.send(JSON.stringify({ type: "ability", ability: "overcharge" }));
         window.trackSignal("Ability.Used", { ability: "overcharge" });
+        sfx.ability();
         abilityCooldownUntil.overcharge = Date.now() + (abilityCfg.cooldownMs || 45000);
         updateAbilityButtons();
         return;
@@ -548,6 +735,23 @@
 
   document.getElementById("tipJarLink").addEventListener("click", () => {
     window.trackSignal("TipJar.Clicked");
+  });
+
+  const colorblindToggleEl = document.getElementById("colorblindToggle");
+  colorblindToggleEl.checked = colorblindMode;
+  colorblindToggleEl.addEventListener("change", (e) => {
+    colorblindMode = e.target.checked;
+    localStorage.setItem("meridianColorblind", colorblindMode ? "1" : "0");
+    draw();
+  });
+
+  document.getElementById("soundBtn").addEventListener("click", () => {
+    muted = !muted;
+    localStorage.setItem("meridianMuted", muted ? "1" : "0");
+    const btn = document.getElementById("soundBtn");
+    btn.classList.toggle("muted", muted);
+    btn.textContent = muted ? "\u{1F507}" : "\u{1F50A}";
+    if (!muted) { ensureAudio(); playTone(500, 60, "sine", 0.12); }
   });
 
   document.getElementById("inviteBtn").addEventListener("click", () => {
