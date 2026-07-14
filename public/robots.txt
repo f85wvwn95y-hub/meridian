@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://meridian-ruff.onrender.com/sitemap.xml

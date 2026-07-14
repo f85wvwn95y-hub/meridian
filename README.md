@@ -1,4 +1,4 @@
-# Meridian: Race the Dawn
+F# Meridian: Race the Dawn
 
 A real-time multiplayer territory game where the map is Earth and the clock is
 real UTC time. A live day/night terminator, computed from actual solar

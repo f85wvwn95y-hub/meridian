@@ -483,6 +483,19 @@ async function shutdown() {
 process.on("SIGTERM", shutdown);
 process.on("SIGINT", shutdown);
 
+// Safety net: log unexpected errors instead of letting the process die silently
+// (or crash-loop with no trail) once real traffic is hitting this. A rejected
+// promise anywhere we forgot to .catch() no longer takes the whole server down.
+process.on("unhandledRejection", (reason) => {
+  console.error("Unhandled rejection:", reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("Uncaught exception:", err);
+  // Don't exit -- Render will keep the process running, and a hard crash-restart
+  // loses all in-memory game state until the next D1 flush. Logging is enough
+  // to see the error; if crashes recur, the fix belongs at the source.
+});
+
 // Reconnects a returning player's income to any cells they still own: after
 // a restart, or between sessions, persisted cells have ownerId=null (no live
 // connection). Matching by ownerName restores accrual without needing the
