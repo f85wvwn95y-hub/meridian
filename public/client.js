@@ -301,6 +301,20 @@
     document.getElementById("guildRows").innerHTML = rows || `<div class="lb-row" style="color:#8993ad">No guilds yet</div>`;
   }
 
+  function renderAllTimeLeaderboard(list) {
+    const el = document.getElementById("allTimeRows");
+    if (!el) return;
+    const rows = (list || [])
+      .map((p) => {
+        const tag = p.guild ? ` <span style="color:#8993ad">[${escapeHtml(p.guild)}]</span>` : "";
+        const badge = p.founder ? ` <span class="founder-badge">FOUNDER</span>` : "";
+        return `<div class="lb-row"><span class="swatch" style="background:${p.color || "#5c7dff"}"></span>
+        <span class="lb-name">${escapeHtml(p.name)}${tag}${badge}</span><span>${Math.round(p.careerLumen)}</span></div>`;
+      })
+      .join("");
+    el.innerHTML = rows || `<div class="lb-row" style="color:#8993ad">No career data yet</div>`;
+  }
+
   function escapeHtml(s) {
     return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   }
@@ -342,6 +356,7 @@
         currentEventState = msg.event || null;
         if (msg.season) seasonInfo = msg.season;
         recentSeasons = msg.recentSeasons || [];
+        renderAllTimeLeaderboard(msg.allTimeLeaderboard);
         myGuildChat = msg.guildChat || [];
         myWars = msg.wars || [];
         recentWarResults = msg.recentWarResults || [];
@@ -383,6 +398,8 @@
         document.getElementById("statOnline").textContent = msg.playerCount;
       } else if (msg.type === "toast") {
         showToast(msg.message);
+      } else if (msg.type === "allTimeLeaderboard") {
+        renderAllTimeLeaderboard(msg.allTimeLeaderboard);
       } else if (msg.type === "guildChat") {
         myGuildChat.push(msg.entry);
         myGuildChat = myGuildChat.slice(-30);

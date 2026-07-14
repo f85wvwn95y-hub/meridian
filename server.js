@@ -118,6 +118,18 @@ let seasonNumber = 1;
 let seasonStartedAt = Date.now();
 let recentSeasons = []; // last few season summaries, for a Hall of Fame panel
 
+// All-time (career) leaderboard: cumulative career_lumen never resets, unlike seasonLumen.
+// Includes every registered account (even offline ones), so it's refreshed periodically
+// from D1 rather than derived from the in-memory `players` map like the season leaderboard.
+let allTimeLeaderboard = [];
+async function refreshAllTimeLeaderboard() {
+  try {
+    allTimeLeaderboard = await persistence.getAllTimeLeaderboard(10);
+  } catch (err) {
+    console.error("All-time leaderboard refresh failed:", err.message);
+  }
+}
+
 function warKey(guildA, guildB) {
   return [guildA, guildB].sort().join("|");
 }
@@ -165,7 +177,9 @@ async function flushToDisk() {
   // Also persist lumen/guild for any currently-connected registered accounts.
   const accountSaves = [...players.values()]
     .filter((p) => p.kind === "account")
-    .map((p) => persistence.saveUserState(p.userId, { lumen: p.lumen, guild: p.guild, seasonLumen: p.seasonLumen, color: p.color }));
+    .map((p) => persistence.saveUserState(p.userId, {
+      lumen: p.lumen, guild: p.guild, seasonLumen: p.seasonLumen, careerLumen: p.careerLumen, color: p.color,
+    }));
   await Promise.all(accountSaves);
 
   await persistence.upsertDailyStats(statsToday.date, statsToday);
@@ -358,6 +372,7 @@ function startTicking() {
           const gained = incomeFor(illum) * dt * incomeMultiplier * (overchargeActive ? OVERCHARGE_MULTIPLIER : 1);
           owner.lumen += gained;
           owner.seasonLumen = (owner.seasonLumen || 0) + gained;
+          owner.careerLumen = (owner.careerLumen || 0) + gained;
           // Passive drift only climbs to MAX_DEFENSE -- it never pulls a
           // fortified cell's defense back down below where a player paid it up to.
           if (cell.defense < MAX_DEFENSE) {
@@ -394,6 +409,9 @@ function startTicking() {
   // Periodically persist owned territory so it survives restarts/redeploys.
   setInterval(() => {
     flushToDisk().catch((err) => console.error("Periodic flush failed:", err.message));
+    refreshAllTimeLeaderboard().then(() => {
+      broadcast({ type: "allTimeLeaderboard", allTimeLeaderboard });
+    });
   }, FLUSH_MS);
 }
 
@@ -434,6 +452,8 @@ async function main() {
   } catch (err) {
     console.error("Season state load failed, starting fresh:", err.message);
   }
+
+  await refreshAllTimeLeaderboard();
 
   try {
     const [savedToday] = await persistence.getDailyStats(1);
@@ -497,6 +517,7 @@ function registerPlayer(ws, player) {
     event: currentEvent(subsolarPoint(new Date()).lat),
     season: { number: seasonNumber, startedAt: seasonStartedAt, durationMs: SEASON_DURATION_MS },
     recentSeasons,
+    allTimeLeaderboard,
     cosmetics: {
       baseColors: BASE_COLORS,
       milestoneColors: MILESTONE_COLORS,
@@ -560,6 +581,7 @@ wss.on("connection", (ws, req) => {
           color: assignColor(),
           lumen: 20,
           seasonLumen: 0,
+          careerLumen: 0,
           founder: false,
           isSupporter: false,
           cellCount: cellCountFor(name),
@@ -610,6 +632,7 @@ wss.on("connection", (ws, req) => {
           color: assignColor(),
           lumen: 20,
           seasonLumen: 0,
+          careerLumen: 0,
           founder,
           isSupporter: false,
           cellCount: cellCountFor(username),
@@ -649,6 +672,7 @@ wss.on("connection", (ws, req) => {
           color: user.color || assignColor(),
           lumen: user.lumen,
           seasonLumen: user.seasonLumen || 0,
+          careerLumen: user.careerLumen || 0,
           founder: user.founder,
           isSupporter: user.isSupporter,
           cellCount: cellCountFor(user.username),
@@ -681,6 +705,7 @@ wss.on("connection", (ws, req) => {
           color: user.color || assignColor(),
           lumen: user.lumen,
           seasonLumen: user.seasonLumen || 0,
+          careerLumen: user.careerLumen || 0,
           founder: user.founder,
           isSupporter: user.isSupporter,
           cellCount: cellCountFor(user.username),

@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS users (
   guild TEXT,
   lumen REAL NOT NULL DEFAULT 20,
   season_lumen REAL NOT NULL DEFAULT 0,
+  career_lumen REAL NOT NULL DEFAULT 0,
   color TEXT,
   founder INTEGER NOT NULL DEFAULT 0,
   is_supporter INTEGER NOT NULL DEFAULT 0,

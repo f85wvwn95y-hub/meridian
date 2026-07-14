@@ -92,7 +92,7 @@ async function saveCells(cellList) {
 async function getUserByUsername(username) {
   if (!enabled) return null;
   const rows = await query(
-    "SELECT id, username, password_hash, salt, guild, lumen, season_lumen, color, founder, is_supporter FROM users WHERE username = ?",
+    "SELECT id, username, password_hash, salt, guild, lumen, season_lumen, career_lumen, color, founder, is_supporter FROM users WHERE username = ?",
     [username]
   );
   const row = (rows || [])[0];
@@ -105,6 +105,7 @@ async function getUserByUsername(username) {
     guild: row.guild || null,
     lumen: row.lumen,
     seasonLumen: row.season_lumen || 0,
+    careerLumen: row.career_lumen || 0,
     color: row.color || null,
     founder: !!row.founder,
     isSupporter: !!row.is_supporter,
@@ -125,14 +126,33 @@ async function createUser({ username, passwordHash, salt, guild, founder }) {
 }
 
 /** Persists an account's current lumen/guild/season progress/color (called periodically, like cell flushes). */
-async function saveUserState(userId, { lumen, guild, seasonLumen, color }) {
+async function saveUserState(userId, { lumen, guild, seasonLumen, careerLumen, color }) {
   if (!enabled) return;
   try {
-    await query("UPDATE users SET lumen = ?, guild = ?, season_lumen = ?, color = ? WHERE id = ?", [
-      lumen, guild || null, seasonLumen || 0, color || null, userId,
+    await query("UPDATE users SET lumen = ?, guild = ?, season_lumen = ?, career_lumen = ?, color = ? WHERE id = ?", [
+      lumen, guild || null, seasonLumen || 0, careerLumen || 0, color || null, userId,
     ]);
   } catch (err) {
     console.error("D1 user save failed:", err.message);
+  }
+}
+
+/** Returns the top N accounts of all time by cumulative career Lumen -- includes offline players,
+ * unlike the in-memory season leaderboard which only shows who's currently connected. */
+async function getAllTimeLeaderboard(limit = 10) {
+  if (!enabled) return [];
+  try {
+    const rows = await query(
+      "SELECT username, career_lumen, guild, color, founder FROM users ORDER BY career_lumen DESC LIMIT ?",
+      [limit]
+    );
+    return (rows || []).map((r) => ({
+      name: r.username, careerLumen: Math.round(r.career_lumen || 0), guild: r.guild || null,
+      color: r.color, founder: !!r.founder,
+    }));
+  } catch (err) {
+    console.error("D1 all-time leaderboard load failed:", err.message);
+    return [];
   }
 }
 
@@ -259,4 +279,5 @@ module.exports = {
   upsertDailyStats,
   getDailyStats,
   incrementAndGetAccountCount,
+  getAllTimeLeaderboard,
 };
