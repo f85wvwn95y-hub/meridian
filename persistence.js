@@ -88,14 +88,10 @@ async function saveCells(cellList) {
   }
 }
 
-/** Looks up an account by username. Returns null if not found or persistence is off. */
-async function getUserByUsername(username) {
-  if (!enabled) return null;
-  const rows = await query(
-    "SELECT id, username, password_hash, salt, guild, lumen, season_lumen, career_lumen, color, founder, is_supporter FROM users WHERE username = ?",
-    [username]
-  );
-  const row = (rows || [])[0];
+const USER_COLUMNS =
+  "id, username, password_hash, salt, guild, lumen, season_lumen, career_lumen, color, founder, is_supporter, google_sub, apple_sub, email";
+
+function rowToUser(row) {
   if (!row) return null;
   return {
     id: row.id,
@@ -109,17 +105,45 @@ async function getUserByUsername(username) {
     color: row.color || null,
     founder: !!row.founder,
     isSupporter: !!row.is_supporter,
+    googleSub: row.google_sub || null,
+    appleSub: row.apple_sub || null,
+    email: row.email || null,
   };
 }
 
-/** Creates a new account. Returns the new user's id, or null if the username is taken. */
-async function createUser({ username, passwordHash, salt, guild, founder }) {
+/** Looks up an account by username. Returns null if not found or persistence is off. */
+async function getUserByUsername(username) {
+  if (!enabled) return null;
+  const rows = await query(`SELECT ${USER_COLUMNS} FROM users WHERE username = ?`, [username]);
+  return rowToUser((rows || [])[0]);
+}
+
+/** Looks up an account linked to a given Google account (the token's "sub" claim). */
+async function getUserByGoogleSub(googleSub) {
+  if (!enabled || !googleSub) return null;
+  const rows = await query(`SELECT ${USER_COLUMNS} FROM users WHERE google_sub = ?`, [googleSub]);
+  return rowToUser((rows || [])[0]);
+}
+
+/** Looks up an account linked to a given Apple account (the token's "sub" claim). */
+async function getUserByAppleSub(appleSub) {
+  if (!enabled || !appleSub) return null;
+  const rows = await query(`SELECT ${USER_COLUMNS} FROM users WHERE apple_sub = ?`, [appleSub]);
+  return rowToUser((rows || [])[0]);
+}
+
+/** Creates a new account. Returns the new user's id, or null if the username is taken.
+ * googleSub/appleSub/email are optional -- set when the account is created via OAuth sign-in.
+ * passwordHash/salt are still required (schema has them NOT NULL); OAuth-only signups pass
+ * a random, un-guessable value that can never be produced by a real password login attempt. */
+async function createUser({ username, passwordHash, salt, guild, founder, googleSub, appleSub, email }) {
   if (!enabled) return null;
   const existing = await getUserByUsername(username);
   if (existing) return null;
   await query(
-    "INSERT INTO users (username, password_hash, salt, guild, lumen, founder, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-    [username, passwordHash, salt, guild || null, 20, founder ? 1 : 0, Date.now()]
+    `INSERT INTO users (username, password_hash, salt, guild, lumen, founder, created_at, google_sub, apple_sub, email)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [username, passwordHash, salt, guild || null, 20, founder ? 1 : 0, Date.now(), googleSub || null, appleSub || null, email || null]
   );
   const created = await getUserByUsername(username);
   return created ? created.id : null;
@@ -269,6 +293,8 @@ module.exports = {
   loadAllCells,
   saveCells,
   getUserByUsername,
+  getUserByGoogleSub,
+  getUserByAppleSub,
   createUser,
   saveUserState,
   getGameMeta,

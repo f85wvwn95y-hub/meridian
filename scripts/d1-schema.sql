@@ -23,8 +23,14 @@ CREATE TABLE IF NOT EXISTS users (
   color TEXT,
   founder INTEGER NOT NULL DEFAULT 0,
   is_supporter INTEGER NOT NULL DEFAULT 0,
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  google_sub TEXT,
+  apple_sub TEXT,
+  email TEXT
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_sub ON users(google_sub);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_apple_sub ON users(apple_sub);
 
 -- Small persistent key/value store for global game state (current season number,
 -- when it started, etc) that needs to survive restarts/redeploys.

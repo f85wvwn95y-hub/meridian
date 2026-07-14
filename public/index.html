@@ -91,6 +91,14 @@
     color: #111; font-weight: 600; font-size: 14px; cursor: pointer;
   }
   #joinBox button.submitBtn:hover { background: #ffdd7f; }
+  #oauthButtons { display: none; margin-top: 16px; }
+  #oauthButtons.ready { display: block; }
+  #googleSignInDiv { display: flex; justify-content: center; margin-bottom: 8px; }
+  #appleid-signin { width: 100%; height: 40px; margin-bottom: 8px; }
+  #oauthDivider { display: none; align-items: center; gap: 10px; margin: 14px 0; color: #556; font-size: 11px; }
+  #oauthDivider.ready { display: flex; }
+  #oauthDivider::before, #oauthDivider::after { content: ""; flex: 1; height: 1px; background: #232b3d; }
+  #oauthUsernamePane .oauthUsernameHint { color: #8993ad; font-size: 12px; margin-bottom: 10px; text-align: left; }
   #authTabs { display: flex; gap: 6px; margin: 16px 0 10px; }
   #authTabs button {
     flex: 1; padding: 8px; border-radius: 6px; border: 1px solid #2a3348; background: #0b0f1a;
@@ -350,6 +358,12 @@
     <h1>Meridian</h1>
     <div class="tagline">Claim territory. Follow the dawn. Never miss a rush.</div>
 
+    <div id="oauthButtons">
+      <div id="googleSignInDiv"></div>
+      <div id="appleid-signin" data-color="black" data-border="true" data-type="continue" data-mode="center-align"></div>
+    </div>
+    <div id="oauthDivider"><span>or</span></div>
+
     <div id="authTabs">
       <button data-pane="login" class="active">Log in</button>
       <button data-pane="signup">Sign up</button>
@@ -373,6 +387,13 @@
       <input id="guestName" maxlength="20" placeholder="Pick a name" />
       <input id="guestGuild" maxlength="6" placeholder="Guild tag (optional)" />
       <button class="submitBtn" id="guestBtn">Play as guest</button>
+    </div>
+
+    <div id="oauthUsernamePane" class="authPane">
+      <div class="oauthUsernameHint">One last step -- pick a username for your Meridian account.</div>
+      <input id="oauthUsername" maxlength="20" placeholder="Username (3-20 characters)" autofocus />
+      <input id="oauthGuild" maxlength="6" placeholder="Guild tag (optional)" />
+      <button class="submitBtn" id="oauthCompleteBtn">Continue</button>
     </div>
 
     <div id="authError"></div>

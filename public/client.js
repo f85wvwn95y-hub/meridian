@@ -465,6 +465,8 @@
   let hasWelcomed = false;
   let reconnectAttempts = 0;
   let reconnectTimer = null;
+  let pendingOAuthProvider = null;
+  let pendingOAuthIdToken = null;
 
   function showReconnecting(attempt) {
     const el = document.getElementById("eventBanner");
@@ -605,6 +607,17 @@
         recentSeasons = [msg.summary, ...recentSeasons].slice(0, 5);
         renderSeasonInfo();
         showToast(`Season ${msg.summary.seasonNumber} complete! Season ${msg.seasonNumber} begins.`);
+      } else if (msg.type === "oauthNeedsUsername") {
+        // First time we've seen this Google/Apple account -- ask for a username before creating it.
+        // The idToken doesn't need to come back from the server -- we still have it right here in joinMsg.
+        pendingOAuthProvider = joinMsg.provider;
+        pendingOAuthIdToken = joinMsg.idToken;
+        document.querySelectorAll(".authPane").forEach((p) => p.classList.remove("active"));
+        document.getElementById("oauthUsernamePane").classList.add("active");
+        document.getElementById("authTabs").style.display = "none";
+        document.getElementById("oauthButtons").style.display = "none";
+        document.getElementById("oauthDivider").style.display = "none";
+        document.getElementById("authError").textContent = "";
       } else if (msg.type === "error") {
         const modal = document.getElementById("joinModal");
         if (modal) {
@@ -857,6 +870,91 @@
     const name = document.getElementById("guestName").value.trim() || "Wanderer";
     const guild = document.getElementById("guestGuild").value.trim();
     connect({ type: "guestJoin", name, guild });
+  });
+
+  document.getElementById("oauthCompleteBtn").addEventListener("click", () => {
+    clearAuthError();
+    const username = document.getElementById("oauthUsername").value.trim();
+    const guild = document.getElementById("oauthGuild").value.trim();
+    if (username.length < 3) {
+      document.getElementById("authError").textContent = "Username must be at least 3 characters.";
+      return;
+    }
+    if (!pendingOAuthProvider || !pendingOAuthIdToken) {
+      document.getElementById("authError").textContent = "Sign-in session expired -- please try again.";
+      return;
+    }
+    const msg = { type: "oauthSignIn", provider: pendingOAuthProvider, idToken: pendingOAuthIdToken, username, guild };
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+    else connect(msg);
+  });
+
+  // ---- Google / Apple sign-in (optional -- only shows up once the server confirms a client ID is configured) ----
+  function startOAuthSignIn(provider, idToken) {
+    clearAuthError();
+    connect({ type: "oauthSignIn", provider, idToken });
+  }
+
+  async function initOAuthProviders() {
+    let config;
+    try {
+      const res = await fetch("/config");
+      config = await res.json();
+    } catch {
+      return; // no OAuth configured (or offline) -- password/guest sign-in still works fine
+    }
+    let any = false;
+
+    if (config.googleClientId) {
+      any = true;
+      const script = document.createElement("script");
+      script.src = "https://accounts.google.com/gsi/client";
+      script.async = true;
+      script.onload = () => {
+        google.accounts.id.initialize({
+          client_id: config.googleClientId,
+          callback: (response) => startOAuthSignIn("google", response.credential),
+        });
+        google.accounts.id.renderButton(document.getElementById("googleSignInDiv"), {
+          theme: "outline", size: "large", width: 280, text: "continue_with",
+        });
+      };
+      document.head.appendChild(script);
+    }
+
+    if (config.appleClientId) {
+      any = true;
+      const script = document.createElement("script");
+      script.src = "https://appleid.cdn-apple.com/appleauth/static/jsapi/appleid/1/en_US/appleid.auth.js";
+      script.async = true;
+      script.onload = () => {
+        AppleID.auth.init({
+          clientId: config.appleClientId,
+          scope: "name email",
+          redirectURI: window.location.origin,
+          usePopup: true,
+        });
+      };
+      document.head.appendChild(script);
+    }
+
+    if (any) {
+      document.getElementById("oauthButtons").classList.add("ready");
+      document.getElementById("oauthDivider").classList.add("ready");
+    }
+  }
+  initOAuthProviders();
+
+  document.addEventListener("AppleIDSignInOnSuccess", (event) => {
+    const idToken = event.detail && event.detail.authorization && event.detail.authorization.id_token;
+    if (idToken) startOAuthSignIn("apple", idToken);
+  });
+  document.addEventListener("AppleIDSignInOnFailure", (event) => {
+    // Apple fires this on a simple popup close/cancel too -- don't show a scary error for that.
+    const err = event.detail && event.detail.error;
+    if (err && err !== "popup_closed_by_user") {
+      document.getElementById("authError").textContent = "Apple sign-in failed -- please try again.";
+    }
   });
 
   // Enter key submits whichever pane is currently active.

@@ -7,6 +7,43 @@ const { CELL_SIZE, allCellIds, cellCenter } = require("./grid");
 const persistence = require("./persistence");
 const auth = require("./auth");
 const security = require("./security");
+const { OAuth2Client } = require("google-auth-library");
+const appleSignin = require("apple-signin-auth");
+
+// ---- Google / Apple sign-in ----
+// Both are optional -- if the env var isn't set, that provider's sign-in
+// attempts fail with a clear error rather than crashing the server, so the
+// game runs fine before these are configured.
+const GOOGLE_CLIENT_ID = (process.env.GOOGLE_CLIENT_ID || "").trim();
+const APPLE_CLIENT_ID = (process.env.APPLE_CLIENT_ID || "").trim(); // Apple "Services ID" -- used as both the JS SDK clientId and the verification audience
+const googleClient = GOOGLE_CLIENT_ID ? new OAuth2Client(GOOGLE_CLIENT_ID) : null;
+if (!GOOGLE_CLIENT_ID) console.log("GOOGLE_CLIENT_ID not set -- Google sign-in disabled.");
+if (!APPLE_CLIENT_ID) console.log("APPLE_CLIENT_ID not set -- Apple sign-in disabled.");
+
+/** Verifies a Google ID token server-side. Returns {sub, email} or null. Never trusts the client's claims directly. */
+async function verifyGoogleToken(idToken) {
+  if (!googleClient || !idToken) return null;
+  try {
+    const ticket = await googleClient.verifyIdToken({ idToken, audience: GOOGLE_CLIENT_ID });
+    const payload = ticket.getPayload();
+    if (!payload || !payload.sub) return null;
+    return { sub: payload.sub, email: payload.email || null };
+  } catch {
+    return null;
+  }
+}
+
+/** Verifies an Apple ID token server-side (signature + audience + issuer). Returns {sub, email} or null. */
+async function verifyAppleToken(idToken) {
+  if (!APPLE_CLIENT_ID || !idToken) return null;
+  try {
+    const payload = await appleSignin.verifyIdToken(idToken, { audience: APPLE_CLIENT_ID, ignoreExpiration: false });
+    if (!payload || !payload.sub) return null;
+    return { sub: payload.sub, email: payload.email || null };
+  } catch {
+    return null;
+  }
+}
 
 const PORT = process.env.PORT || 8787;
 const TICK_MS = 2000;
@@ -427,6 +464,17 @@ app.get("/stats", async (req, res) => {
     recentDays,
   });
 });
+// Public, non-secret client config (OAuth client IDs are meant to be public --
+// unlike API secrets, they identify the app, not authenticate it). The client
+// only shows a "Continue with Google/Apple" button once it's confirmed the
+// corresponding ID is actually configured, so this degrades gracefully to
+// "no button" rather than a broken one.
+app.get("/config", (req, res) => {
+  res.json({
+    googleClientId: GOOGLE_CLIENT_ID || null,
+    appleClientId: APPLE_CLIENT_ID || null,
+  });
+});
 app.use(express.static(path.join(__dirname, "public")));
 let server;
 let wss;
@@ -672,6 +720,10 @@ wss.on("connection", (ws, req) => {
         }
         const user = username ? await persistence.getUserByUsername(username) : null;
         if (!user || !auth.verifyPassword(password, user.salt, user.passwordHash)) {
+          if (user && (user.googleSub || user.appleSub)) {
+            send(ws, { type: "error", message: `This account uses ${user.googleSub ? "Google" : "Apple"} sign-in -- use that button instead of a password.` });
+            return;
+          }
           send(ws, { type: "error", message: "Invalid username or password." });
           return;
         }
@@ -728,6 +780,110 @@ wss.on("connection", (ws, req) => {
           token: msg.token,
         };
         registerPlayer(ws, player);
+        return;
+      }
+
+      if (msg.type === "oauthSignIn") {
+        if (!security.oauthLimiter(ip)) {
+          send(ws, { type: "error", message: "Too many sign-in attempts from your network -- please wait a few minutes." });
+          return;
+        }
+        if (!persistence.enabled) {
+          send(ws, { type: "error", message: "Accounts aren't available right now -- try Guest play instead." });
+          return;
+        }
+        const provider = msg.provider === "google" ? "google" : msg.provider === "apple" ? "apple" : null;
+        if (!provider) {
+          send(ws, { type: "error", message: "Unknown sign-in provider." });
+          return;
+        }
+        const identity = provider === "google" ? await verifyGoogleToken(msg.idToken) : await verifyAppleToken(msg.idToken);
+        if (!identity) {
+          send(ws, { type: "error", message: "Sign-in verification failed -- please try again." });
+          return;
+        }
+
+        const existing = provider === "google"
+          ? await persistence.getUserByGoogleSub(identity.sub)
+          : await persistence.getUserByAppleSub(identity.sub);
+
+        if (existing) {
+          // Returning player, already linked -- log them straight in.
+          const token = auth.signToken({ uid: existing.id, username: existing.username });
+          const player = {
+            kind: "account",
+            id: `acct:${existing.id}`,
+            userId: existing.id,
+            name: existing.username,
+            guild: existing.guild,
+            color: existing.color || assignColor(),
+            lumen: existing.lumen,
+            seasonLumen: existing.seasonLumen || 0,
+            careerLumen: existing.careerLumen || 0,
+            founder: existing.founder,
+            isSupporter: existing.isSupporter,
+            cellCount: cellCountFor(existing.username),
+            lastClaimAt: 0,
+            overchargeUntil: 0,
+            cooldowns: {},
+            token,
+          };
+          registerPlayer(ws, player);
+          return;
+        }
+
+        // First time we've seen this Google/Apple identity -- need a username before we can create an account.
+        const requestedUsername = sanitizeUsername(msg.username);
+        if (!requestedUsername) {
+          send(ws, { type: "oauthNeedsUsername", provider });
+          return;
+        }
+        if (!security.signupLimiter(ip)) {
+          send(ws, { type: "error", message: "Too many accounts created from your network -- please try again later." });
+          return;
+        }
+        const guild = sanitizeGuild(msg.guild);
+        // OAuth-only accounts still need a password_hash/salt (the column is NOT NULL) -- generate an
+        // un-guessable random one that's discarded immediately; password login can never match it.
+        const junk = auth.hashPassword(crypto.randomBytes(32).toString("hex"));
+        const accountNumber = await persistence.incrementAndGetAccountCount();
+        const founder = accountNumber > 0 && accountNumber <= FOUNDER_ACCOUNT_LIMIT;
+        const userId = await persistence.createUser({
+          username: requestedUsername,
+          passwordHash: junk.hash,
+          salt: junk.salt,
+          guild,
+          founder,
+          googleSub: provider === "google" ? identity.sub : null,
+          appleSub: provider === "apple" ? identity.sub : null,
+          email: identity.email,
+        });
+        if (!userId) {
+          send(ws, { type: "error", message: "That username is already taken." });
+          return;
+        }
+        statsToday.newAccounts += 1;
+        const token = auth.signToken({ uid: userId, username: requestedUsername });
+        const player = {
+          kind: "account",
+          id: `acct:${userId}`,
+          userId,
+          name: requestedUsername,
+          guild,
+          color: assignColor(),
+          lumen: 20,
+          seasonLumen: 0,
+          careerLumen: 0,
+          founder,
+          isSupporter: false,
+          cellCount: cellCountFor(requestedUsername),
+          lastClaimAt: 0,
+          overchargeUntil: 0,
+          cooldowns: {},
+          token,
+        };
+        registerPlayer(ws, player);
+        if (founder) send(ws, { type: "toast", message: `Welcome, Founder! You're account #${accountNumber} -- exclusive Founder color unlocked.` });
         return;
       }
 

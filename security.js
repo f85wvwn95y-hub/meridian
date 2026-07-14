@@ -45,6 +45,7 @@ function makeLimiter(max, windowMs) {
 
 const signupLimiter = makeLimiter(5, 60 * 60 * 1000); // 5 signups / hour / IP
 const loginLimiter = makeLimiter(10, 5 * 60 * 1000); // 10 login attempts / 5 min / IP
+const oauthLimiter = makeLimiter(15, 5 * 60 * 1000); // 15 Google/Apple sign-in attempts / 5 min / IP
 const messageLimiter = makeLimiter(20, 1000); // 20 messages / second / connection
 const chatLimiter = makeLimiter(1, 2000); // 1 guild chat message / 2 sec / connection
 const declareWarLimiter = makeLimiter(3, 10 * 60 * 1000); // 3 war declarations / 10 min / IP -- it's free, so it needs its own cap to prevent toast-spam abuse
@@ -56,6 +57,7 @@ module.exports = {
   removeConnection,
   signupLimiter,
   loginLimiter,
+  oauthLimiter,
   messageLimiter,
   chatLimiter,
   declareWarLimiter,

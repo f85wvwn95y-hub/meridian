@@ -1,4 +1,4 @@
-F# Meridian: Race the Dawn
+# Meridian: Race the Dawn
 
 A real-time multiplayer territory game where the map is Earth and the clock is
 real UTC time. A live day/night terminator, computed from actual solar
@@ -67,6 +67,29 @@ On Render: Dashboard → your service → **Environment** → add the three
 variables → save (triggers an automatic redeploy). Without them, Meridian
 just logs "Persistence: OFF (in-memory only)" and runs as before.
 
+## Google / Apple sign-in (optional)
+
+Alongside username/password and guest play, Meridian supports "Continue with
+Google" and "Continue with Apple" -- both optional, controlled by env vars:
+
+- `GOOGLE_CLIENT_ID` -- an OAuth 2.0 Client ID from
+  [Google Cloud Console](https://console.cloud.google.com/apis/credentials)
+  (Create Credentials → OAuth client ID → Web application). Add your live
+  domain (e.g. `https://meridian-ruff.onrender.com`) under "Authorized
+  JavaScript origins" -- no client secret needed, this flow only uses the
+  public client ID.
+- `APPLE_CLIENT_ID` -- a Services ID from your
+  [Apple Developer account](https://developer.apple.com/account/resources/identifiers/list/serviceId)
+  with "Sign in with Apple" enabled. Under that Services ID's configuration,
+  add your live domain to "Domains and Subdomains" and add your exact page
+  URL (e.g. `https://meridian-ruff.onrender.com/`) as a "Return URL".
+
+Both buttons only appear once the server confirms the corresponding env var
+is set (`GET /config`) -- unset either one and that button just doesn't show,
+no broken UI. No client secret or private key is required for either
+provider: the client-side SDKs hand back a signed ID token, and the server
+verifies it directly against Google's/Apple's public keys.
+
 ## Deploying so people around the world can actually join
 
 Any host that supports long-lived WebSocket connections works. Easiest options:
@@ -84,8 +107,6 @@ Set the `PORT` environment variable if your host requires a specific port
 
 - **Persistence**: swap the in-memory `Map`s in `server.js` for Postgres or
   Redis so empires survive restarts and the world can scale past one process.
-- **Accounts**: add email/OAuth login so a player's empire is tied to them,
-  not a browser tab.
 - **Scaling past one process**: once concurrent players exceed what a single
   Node process can broadcast to, shard the world by region and connect
   shards with Redis pub/sub or NATS.
