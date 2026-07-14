@@ -209,6 +209,7 @@
       el.addEventListener("click", () => {
         if (!ws || ws.readyState !== WebSocket.OPEN) return;
         ws.send(JSON.stringify({ type: "setColor", color: el.dataset.color }));
+        window.trackSignal("Color.Changed");
       });
     });
   }
@@ -356,6 +357,7 @@
         draw();
         document.getElementById("helpBtn").style.display = "flex";
         if (!localStorage.getItem("meridianSeenTutorial")) showTutorial();
+        window.trackSignal("Player.Joined", { authMethod: joinMsg.type });
       } else if (msg.type === "tick") {
         subsolar = msg.subsolar;
         for (const c of msg.changed) cellState.set(c.id, c);
@@ -461,6 +463,7 @@
 
     if (activeAbility) {
       ws.send(JSON.stringify({ type: "ability", ability: activeAbility, cellId: id }));
+      window.trackSignal("Ability.Used", { ability: activeAbility });
       abilityCooldownUntil[activeAbility] = Date.now() + (abilityCfg.cooldownMs || 45000);
       activeAbility = null;
       document.getElementById("abilityHint").textContent =
@@ -470,6 +473,7 @@
     }
 
     ws.send(JSON.stringify({ type: "claim", cellId: id }));
+    window.trackSignal("Cell.Clicked");
   });
 
   document.addEventListener("keydown", (e) => {
@@ -492,6 +496,7 @@
       const kind = btn.dataset.ability;
       if (kind === "overcharge") {
         ws.send(JSON.stringify({ type: "ability", ability: "overcharge" }));
+        window.trackSignal("Ability.Used", { ability: "overcharge" });
         abilityCooldownUntil.overcharge = Date.now() + (abilityCfg.cooldownMs || 45000);
         updateAbilityButtons();
         return;
@@ -520,23 +525,23 @@
     const targetGuild = input.value.trim();
     if (!targetGuild || !ws || ws.readyState !== WebSocket.OPEN) return;
     ws.send(JSON.stringify({ type: "declareWar", targetGuild }));
+    window.trackSignal("War.Declared");
     input.value = "";
   });
 
-  document.getElementById("tipJarLink").addEventListener("click", (e) => {
-    if (document.getElementById("tipJarLink").getAttribute("href") === "#") {
-      e.preventDefault();
-      showToast("Tip jar coming soon!");
-    }
+  document.getElementById("tipJarLink").addEventListener("click", () => {
+    window.trackSignal("TipJar.Clicked");
   });
 
   document.getElementById("inviteBtn").addEventListener("click", () => {
     shareOrCopy("Join me in Meridian: Race the Dawn -- claim territory as the real day/night line sweeps the globe.", location.href);
+    window.trackSignal("Share.Invite");
   });
   document.getElementById("shareXBtn").addEventListener("click", () => {
     const text = encodeURIComponent("Claiming territory along the real day/night line in Meridian: Race the Dawn.");
     const url = encodeURIComponent(location.href);
     window.open(`https://twitter.com/intent/tweet?text=${text}&url=${url}`, "_blank", "noopener");
+    window.trackSignal("Share.X");
   });
 
   document.getElementById("shareSeasonBtn").addEventListener("click", () => {
@@ -547,6 +552,7 @@
       ? `Meridian Season ${s.seasonNumber} is complete! Top player: ${top.name} with ${Math.round(top.seasonLumen)} Lumen.`
       : `Meridian Season ${s.seasonNumber} is complete!`;
     shareOrCopy(text, location.href);
+    window.trackSignal("Share.SeasonResult");
   });
   function showTutorial() {
     document.getElementById("tutorialOverlay").style.display = "flex";
@@ -554,6 +560,7 @@
   function hideTutorial() {
     document.getElementById("tutorialOverlay").style.display = "none";
     localStorage.setItem("meridianSeenTutorial", "1");
+    window.trackSignal("Tutorial.Completed");
   }
   document.getElementById("tutorialDone").addEventListener("click", hideTutorial);
   document.getElementById("helpBtn").addEventListener("click", showTutorial);
@@ -564,6 +571,7 @@
     const outcome = r.winner ? `[${r.winner}] won` : "It ended in a draw";
     const text = `Guild war: [${r.guildA}] ${r.scoreA}-${r.scoreB} [${r.guildB}] -- ${outcome} in Meridian: Race the Dawn.`;
     shareOrCopy(text, location.href);
+    window.trackSignal("Share.WarResult");
   });
 
   fetch("land.json")

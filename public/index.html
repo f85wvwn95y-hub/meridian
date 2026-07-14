@@ -15,6 +15,37 @@
 <meta name="twitter:title" content="Meridian: Race the Dawn" />
 <meta name="twitter:description" content="Claim territory as the real day/night line sweeps across the globe. Play with people around the world, right now." />
 <meta name="twitter:image" content="/og-image.png" />
+
+<!--
+  TelemetryDeck: privacy-conscious, cookieless analytics. Sends anonymized
+  usage signals (feature clicks, not gameplay economy numbers) to
+  TelemetryDeck's EU-hosted servers -- complements the fully self-hosted
+  /stats endpoint rather than replacing it. Never throws if it fails to load
+  (ad blockers, offline, etc) -- window.trackSignal always exists as a no-op
+  fallback so the game itself is never affected.
+-->
+<script>
+  window.trackSignal = function () {}; // no-op fallback until (or unless) the SDK below loads
+</script>
+<script type="module">
+  import TelemetryDeck from "https://cdn.jsdelivr.net/npm/@telemetrydeck/sdk/+esm";
+
+  try {
+    let clientUser = localStorage.getItem("meridianTelemetryId");
+    if (!clientUser) {
+      clientUser = crypto.randomUUID();
+      localStorage.setItem("meridianTelemetryId", clientUser);
+    }
+    const td = new TelemetryDeck({ appID: "D109FC13-05E5-4CD9-A466-370F4E8A4E44", clientUser });
+    window.trackSignal = function (type, payload) {
+      try { td.signal(type, payload || {}); } catch (e) { /* never let telemetry break the game */ }
+    };
+    window.trackSignal("App.Launched");
+  } catch (e) {
+    // SDK failed to load (blocked, offline, etc) -- window.trackSignal stays a no-op, game unaffected.
+  }
+</script>
+
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -247,12 +278,8 @@
       <button id="shareSeasonBtn" class="abilityBtn" style="width:100%; margin-top:6px; display:none">Share Season Result</button>
     </div>
 
-    <!--
-      Tip jar placeholder: once you have a Ko-fi / Buy Me a Coffee / GitHub Sponsors
-      link, replace the href below with it. Nothing else needs to change.
-    -->
     <div id="tipJarRow">
-      <a href="#" id="tipJarLink" target="_blank" rel="noopener">&#9749; Support the developer</a>
+      <a href="https://www.paypal.com/paypalme/LietaStudios" id="tipJarLink" target="_blank" rel="noopener">&#9749; Support the developer</a>
     </div>
 
     <!--
