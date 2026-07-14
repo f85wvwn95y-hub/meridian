@@ -92,7 +92,7 @@ async function saveCells(cellList) {
 async function getUserByUsername(username) {
   if (!enabled) return null;
   const rows = await query(
-    "SELECT id, username, password_hash, salt, guild, lumen, season_lumen FROM users WHERE username = ?",
+    "SELECT id, username, password_hash, salt, guild, lumen, season_lumen, color, founder, is_supporter FROM users WHERE username = ?",
     [username]
   );
   const row = (rows || [])[0];
@@ -105,32 +105,44 @@ async function getUserByUsername(username) {
     guild: row.guild || null,
     lumen: row.lumen,
     seasonLumen: row.season_lumen || 0,
+    color: row.color || null,
+    founder: !!row.founder,
+    isSupporter: !!row.is_supporter,
   };
 }
 
 /** Creates a new account. Returns the new user's id, or null if the username is taken. */
-async function createUser({ username, passwordHash, salt, guild }) {
+async function createUser({ username, passwordHash, salt, guild, founder }) {
   if (!enabled) return null;
   const existing = await getUserByUsername(username);
   if (existing) return null;
   await query(
-    "INSERT INTO users (username, password_hash, salt, guild, lumen, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-    [username, passwordHash, salt, guild || null, 20, Date.now()]
+    "INSERT INTO users (username, password_hash, salt, guild, lumen, founder, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    [username, passwordHash, salt, guild || null, 20, founder ? 1 : 0, Date.now()]
   );
   const created = await getUserByUsername(username);
   return created ? created.id : null;
 }
 
-/** Persists an account's current lumen/guild/season progress (called periodically, like cell flushes). */
-async function saveUserState(userId, { lumen, guild, seasonLumen }) {
+/** Persists an account's current lumen/guild/season progress/color (called periodically, like cell flushes). */
+async function saveUserState(userId, { lumen, guild, seasonLumen, color }) {
   if (!enabled) return;
   try {
-    await query("UPDATE users SET lumen = ?, guild = ?, season_lumen = ? WHERE id = ?", [
-      lumen, guild || null, seasonLumen || 0, userId,
+    await query("UPDATE users SET lumen = ?, guild = ?, season_lumen = ?, color = ? WHERE id = ?", [
+      lumen, guild || null, seasonLumen || 0, color || null, userId,
     ]);
   } catch (err) {
     console.error("D1 user save failed:", err.message);
   }
+}
+
+/** Atomically-ish increments and returns the running total of accounts ever created, for the founder cutoff. */
+async function incrementAndGetAccountCount() {
+  if (!enabled) return 0;
+  const meta = await getGameMeta(["total_accounts"]);
+  const next = (Number(meta.total_accounts) || 0) + 1;
+  await setGameMeta("total_accounts", String(next));
+  return next;
 }
 
 /** Reads a small set of persistent key/value settings (season number, timers, etc). */
@@ -246,4 +258,5 @@ module.exports = {
   getRecentSeasons,
   upsertDailyStats,
   getDailyStats,
+  incrementAndGetAccountCount,
 };

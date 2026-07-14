@@ -117,6 +117,30 @@
   #seasonInfoLine { font-size: 11px; color: #8993ad; margin-bottom: 4px; }
   .hof-entry { font-size: 12px; padding: 3px 0; color: #b3bad0; }
 
+  #cosmeticsSection { margin-top: 14px; }
+  #cosmeticsSection h2 { font-size: 13px; text-transform: uppercase; color: #8993ad; margin: 14px 0 6px; }
+  .swatch-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+  .color-swatch {
+    width: 28px; height: 28px; border-radius: 7px; border: 2px solid transparent; cursor: pointer;
+    position: relative; display: flex; align-items: center; justify-content: center;
+  }
+  .color-swatch.selected { border-color: #fff; }
+  .color-swatch.locked { opacity: 0.3; cursor: not-allowed; }
+  .color-swatch .lock-icon { font-size: 11px; }
+  #cosmeticsHint { font-size: 11px; color: #8993ad; margin-top: 6px; }
+  .founder-badge {
+    display: inline-block; background: #ffe066; color: #402d00; font-size: 10px; font-weight: 800;
+    padding: 1px 5px; border-radius: 4px; margin-left: 4px; vertical-align: middle;
+  }
+
+  #tipJarRow { margin-top: 10px; }
+  #tipJarRow a {
+    display: block; text-align: center; padding: 8px; border-radius: 6px; border: 1px dashed #2a3348;
+    color: #8993ad; font-size: 12px; text-decoration: none;
+  }
+  #tipJarRow a:hover { border-color: #ffd35c; color: #ffd35c; }
+  #adSlot { display: none; margin-top: 14px; padding: 10px; border: 1px dashed #2a3348; border-radius: 6px; text-align: center; font-size: 11px; color: #556; }
+
   #helpBtn {
     position: absolute; top: 12px; right: 16px; width: 30px; height: 30px; border-radius: 50%;
     border: 1px solid #2a3348; background: rgba(5,7,13,0.6); color: #e8ecf4; font-weight: 700;
@@ -210,12 +234,33 @@
       <div id="abilityHint">Shield protects a cell you own. Siege weakens an enemy cell. Overcharge doubles your income.</div>
     </div>
 
+    <div id="cosmeticsSection">
+      <h2>Cosmetics</h2>
+      <div id="colorSwatches" class="swatch-grid"></div>
+      <div id="cosmeticsHint">Recolor your territory -- purely visual, no gameplay effect. Locked colors unlock through season milestones, supporter status, or the Founder badge.</div>
+    </div>
+
     <div id="hallOfFame">
       <h2>Season</h2>
       <div id="seasonInfoLine">Season 1</div>
       <div id="hofRows"></div>
       <button id="shareSeasonBtn" class="abilityBtn" style="width:100%; margin-top:6px; display:none">Share Season Result</button>
     </div>
+
+    <!--
+      Tip jar placeholder: once you have a Ko-fi / Buy Me a Coffee / GitHub Sponsors
+      link, replace the href below with it. Nothing else needs to change.
+    -->
+    <div id="tipJarRow">
+      <a href="#" id="tipJarLink" target="_blank" rel="noopener">&#9749; Support the developer</a>
+    </div>
+
+    <!--
+      Ad slot placeholder: once you have an ad network (e.g. Google AdSense) publisher ID,
+      paste the ad unit script/tag inside #adSlot below and remove the inline
+      "display:none" in the CSS rule for #adSlot so it becomes visible.
+    -->
+    <div id="adSlot">Ad space</div>
 
     <div id="guildWarsSection" style="display:none">
       <h2>Guild Wars</h2>

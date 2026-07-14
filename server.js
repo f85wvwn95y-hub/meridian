@@ -65,6 +65,35 @@ const PALETTE = [
   "#ff8f5c", "#5cffd3", "#ff5ca8", "#a8ff5c", "#5c7dff",
 ];
 
+// ---- cosmetics: cell color themes (no gameplay effect, purely visual) ----
+const FOUNDER_ACCOUNT_LIMIT = 200; // first N accounts ever created get the permanent Founder badge + color
+const BASE_COLORS = PALETTE; // always free, same set every guest/new account cycles through automatically
+const MILESTONE_COLORS = [
+  { color: "#ffffff", label: "Frost White", threshold: 500 },
+  { color: "#00e5ff", label: "Aurora Cyan", threshold: 2000 },
+  { color: "#ff2f92", label: "Nova Pink", threshold: 6000 },
+]; // unlocked per-season by reaching a seasonLumen milestone -- resets with each season
+const SUPPORTER_COLORS = [
+  { color: "#111111", label: "Obsidian" },
+  { color: "#f5f0dc", label: "Ivory" },
+]; // exclusive to supporters (manually granted for now, ahead of real payment integration)
+const FOUNDER_COLOR = "#ffe066"; // exclusive to the first FOUNDER_ACCOUNT_LIMIT accounts, permanent
+
+/** Every color hex this player is currently allowed to use on their territory. */
+function availableColors(player) {
+  const colors = [...BASE_COLORS];
+  for (const m of MILESTONE_COLORS) if ((player.seasonLumen || 0) >= m.threshold) colors.push(m.color);
+  if (player.isSupporter) for (const s of SUPPORTER_COLORS) colors.push(s.color);
+  if (player.founder) colors.push(FOUNDER_COLOR);
+  return colors;
+}
+
+/** The player object as sent to the client, with live-computed cosmetic availability included
+ * (so newly-unlocked season milestone colors show up without needing a fresh welcome message). */
+function publicPlayer(player) {
+  return { ...player, availableColors: availableColors(player) };
+}
+
 // ---- world state ----
 const cells = new Map(); // id -> { ownerId, ownerName, color, defense, guild, illum, shieldUntil, siegedUntil }
 for (const id of allCellIds()) {
@@ -136,7 +165,7 @@ async function flushToDisk() {
   // Also persist lumen/guild for any currently-connected registered accounts.
   const accountSaves = [...players.values()]
     .filter((p) => p.kind === "account")
-    .map((p) => persistence.saveUserState(p.userId, { lumen: p.lumen, guild: p.guild, seasonLumen: p.seasonLumen }));
+    .map((p) => persistence.saveUserState(p.userId, { lumen: p.lumen, guild: p.guild, seasonLumen: p.seasonLumen, color: p.color }));
   await Promise.all(accountSaves);
 
   await persistence.upsertDailyStats(statsToday.date, statsToday);
@@ -199,7 +228,7 @@ function claimCost(cell, illum, attackerGuild) {
 function leaderboard() {
   return [...players.values()]
     .map((p) => ({
-      name: p.name, color: p.color, guild: p.guild,
+      name: p.name, color: p.color, guild: p.guild, founder: !!p.founder,
       lumen: Math.round(p.lumen), seasonLumen: Math.round(p.seasonLumen || 0), cellCount: p.cellCount,
     }))
     .sort((a, b) => b.seasonLumen - a.seasonLumen)
@@ -354,7 +383,7 @@ function startTicking() {
     });
 
     for (const [ws, player] of players.entries()) {
-      send(ws, { type: "you", you: player });
+      send(ws, { type: "you", you: publicPlayer(player) });
     }
 
     if (now - seasonStartedAt >= SEASON_DURATION_MS) {
@@ -468,6 +497,13 @@ function registerPlayer(ws, player) {
     event: currentEvent(subsolarPoint(new Date()).lat),
     season: { number: seasonNumber, startedAt: seasonStartedAt, durationMs: SEASON_DURATION_MS },
     recentSeasons,
+    cosmetics: {
+      baseColors: BASE_COLORS,
+      milestoneColors: MILESTONE_COLORS,
+      supporterColors: SUPPORTER_COLORS,
+      founderColor: FOUNDER_COLOR,
+      available: availableColors(player),
+    },
     guildChat: player.guild ? guildChatHistory.get(player.guild) || [] : [],
     wars: [...wars.values()].filter((w) => w.guildA === player.guild || w.guildB === player.guild),
     recentWarResults,
@@ -524,6 +560,8 @@ wss.on("connection", (ws, req) => {
           color: assignColor(),
           lumen: 20,
           seasonLumen: 0,
+          founder: false,
+          isSupporter: false,
           cellCount: cellCountFor(name),
           lastClaimAt: 0,
           overchargeUntil: 0,
@@ -554,7 +592,9 @@ wss.on("connection", (ws, req) => {
         }
         const guild = sanitizeGuild(msg.guild);
         const { hash, salt } = auth.hashPassword(password);
-        const userId = await persistence.createUser({ username, passwordHash: hash, salt, guild });
+        const accountNumber = await persistence.incrementAndGetAccountCount();
+        const founder = accountNumber > 0 && accountNumber <= FOUNDER_ACCOUNT_LIMIT;
+        const userId = await persistence.createUser({ username, passwordHash: hash, salt, guild, founder });
         if (!userId) {
           send(ws, { type: "error", message: "That username is already taken." });
           return;
@@ -570,6 +610,8 @@ wss.on("connection", (ws, req) => {
           color: assignColor(),
           lumen: 20,
           seasonLumen: 0,
+          founder,
+          isSupporter: false,
           cellCount: cellCountFor(username),
           lastClaimAt: 0,
           overchargeUntil: 0,
@@ -577,6 +619,7 @@ wss.on("connection", (ws, req) => {
           token,
         };
         registerPlayer(ws, player);
+        if (founder) send(ws, { type: "toast", message: `Welcome, Founder! You're account #${accountNumber} -- exclusive Founder color unlocked.` });
         return;
       }
 
@@ -603,9 +646,11 @@ wss.on("connection", (ws, req) => {
           userId: user.id,
           name: user.username,
           guild: user.guild,
-          color: assignColor(),
+          color: user.color || assignColor(),
           lumen: user.lumen,
           seasonLumen: user.seasonLumen || 0,
+          founder: user.founder,
+          isSupporter: user.isSupporter,
           cellCount: cellCountFor(user.username),
           lastClaimAt: 0,
           overchargeUntil: 0,
@@ -633,9 +678,11 @@ wss.on("connection", (ws, req) => {
           userId: user.id,
           name: user.username,
           guild: user.guild,
-          color: assignColor(),
+          color: user.color || assignColor(),
           lumen: user.lumen,
           seasonLumen: user.seasonLumen || 0,
+          founder: user.founder,
+          isSupporter: user.isSupporter,
           cellCount: cellCountFor(user.username),
           lastClaimAt: 0,
           overchargeUntil: 0,
@@ -648,6 +695,41 @@ wss.on("connection", (ws, req) => {
 
       const player = players.get(ws);
       if (!player) return;
+
+      if (msg.type === "setColor") {
+        const allowed = availableColors(player);
+        const chosen = String(msg.color || "").toLowerCase();
+        if (!allowed.map((c) => c.toLowerCase()).includes(chosen)) {
+          send(ws, { type: "error", message: "That color isn't unlocked yet." });
+          return;
+        }
+        player.color = chosen;
+        const changedIds = [];
+        for (const [id, cell] of cells.entries()) {
+          if (cell.ownerName === player.name) {
+            cell.color = chosen;
+            changedIds.push(id);
+          }
+        }
+        for (const id of changedIds) broadcast({ type: "cellUpdate", cell: publicCell(id) });
+        send(ws, { type: "you", you: publicPlayer(player) });
+        send(ws, { type: "toast", message: "Territory color updated." });
+
+        if (changedIds.length) {
+          persistence
+            .saveCells(changedIds.map((id) => {
+              const c = cells.get(id);
+              return { id, ownerName: c.ownerName, color: c.color, defense: c.defense, guild: c.guild };
+            }))
+            .catch((err) => console.error("Color recolor save failed:", err.message));
+        }
+        if (player.kind === "account") {
+          persistence
+            .saveUserState(player.userId, { lumen: player.lumen, guild: player.guild, seasonLumen: player.seasonLumen, color: player.color })
+            .catch((err) => console.error("Color save failed:", err.message));
+        }
+        return;
+      }
 
       if (msg.type === "guildChat") {
         if (!security.chatLimiter(ws)) return;
@@ -713,7 +795,7 @@ wss.on("connection", (ws, req) => {
           player.lumen -= OVERCHARGE_COST;
           player.overchargeUntil = now + OVERCHARGE_DURATION_MS;
           player.cooldowns.overcharge = now;
-          send(ws, { type: "you", you: { ...player } });
+          send(ws, { type: "you", you: publicPlayer(player) });
           send(ws, { type: "toast", message: `Overcharge active for ${OVERCHARGE_DURATION_MS / 1000}s -- ${OVERCHARGE_MULTIPLIER}x income!` });
           return;
         }
@@ -735,7 +817,7 @@ wss.on("connection", (ws, req) => {
           cell.shieldUntil = now + SHIELD_DURATION_MS;
           player.cooldowns.shield = now;
           broadcast({ type: "cellUpdate", cell: publicCell(id) });
-          send(ws, { type: "you", you: { ...player } });
+          send(ws, { type: "you", you: publicPlayer(player) });
           send(ws, { type: "toast", message: `Shield raised for ${SHIELD_DURATION_MS / 1000}s.` });
           return;
         }
@@ -761,7 +843,7 @@ wss.on("connection", (ws, req) => {
           cell.siegedUntil = now + SIEGE_DURATION_MS;
           player.cooldowns.siege = now;
           broadcast({ type: "cellUpdate", cell: publicCell(id) });
-          send(ws, { type: "you", you: { ...player } });
+          send(ws, { type: "you", you: publicPlayer(player) });
           send(ws, { type: "toast", message: `Siege launched -- target's defense halved for ${SIEGE_DURATION_MS / 1000}s.` });
           return;
         }
@@ -792,7 +874,7 @@ wss.on("connection", (ws, req) => {
           cell.defense = Math.min(MAX_FORTIFIED_DEFENSE, cell.defense + FORTIFY_INCREMENT);
 
           broadcast({ type: "cellUpdate", cell: publicCell(id) });
-          send(ws, { type: "you", you: { ...player } });
+          send(ws, { type: "you", you: publicPlayer(player) });
           send(ws, {
             type: "toast",
             message: `Fortified -- defense now ${Math.round(cell.defense)} (-${fCost} Lumen)`,

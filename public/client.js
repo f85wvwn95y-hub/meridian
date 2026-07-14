@@ -30,6 +30,7 @@
   let myGuildChat = [];
   let myWars = [];
   let recentWarResults = [];
+  let cosmeticsCfg = { baseColors: [], milestoneColors: [], supporterColors: [], founderColor: "#ffe066" };
 
   function resize() {
     const wrap = document.getElementById("mapWrap");
@@ -159,18 +160,57 @@
     if (toggleLumen) toggleLumen.textContent = Math.round(me.lumen);
     updateGuildSectionsVisibility();
     updateAbilityButtons();
+    renderCosmetics();
   }
 
   function renderLeaderboard(lb) {
     const rows = lb
       .map((p) => {
         const tag = p.guild ? ` <span style="color:#8993ad">[${escapeHtml(p.guild)}]</span>` : "";
+        const badge = p.founder ? ` <span class="founder-badge">FOUNDER</span>` : "";
         const score = p.seasonLumen != null ? p.seasonLumen : p.lumen;
         return `<div class="lb-row"><span class="swatch" style="background:${p.color}"></span>
-        <span class="lb-name">${escapeHtml(p.name)}${tag}</span><span>${Math.round(score)}</span></div>`;
+        <span class="lb-name">${escapeHtml(p.name)}${tag}${badge}</span><span>${Math.round(score)}</span></div>`;
       })
       .join("");
     document.getElementById("lbRows").innerHTML = rows;
+  }
+
+  function renderCosmetics() {
+    const grid = document.getElementById("colorSwatches");
+    if (!grid) return;
+    const mySeasonLumen = (me && me.seasonLumen) || 0;
+    const isSupporter = !!(me && me.isSupporter);
+    const isFounder = !!(me && me.founder);
+    const myColor = (me && me.color || "").toLowerCase();
+
+    const swatches = [];
+    for (const c of cosmeticsCfg.baseColors || []) swatches.push({ color: c, locked: false, label: "" });
+    for (const m of cosmeticsCfg.milestoneColors || []) {
+      swatches.push({ color: m.color, locked: mySeasonLumen < m.threshold, label: `${m.label} -- unlock at ${m.threshold} season Lumen` });
+    }
+    for (const s of cosmeticsCfg.supporterColors || []) {
+      swatches.push({ color: s.color, locked: !isSupporter, label: `${s.label} -- supporter exclusive` });
+    }
+    if (cosmeticsCfg.founderColor) {
+      swatches.push({ color: cosmeticsCfg.founderColor, locked: !isFounder, label: "Founder exclusive" });
+    }
+
+    grid.innerHTML = swatches
+      .map((s) => {
+        const cls = ["color-swatch"];
+        if (s.locked) cls.push("locked");
+        if (myColor === s.color.toLowerCase()) cls.push("selected");
+        return `<div class="${cls.join(" ")}" style="background:${s.color}" data-color="${s.color}" title="${escapeHtml(s.label)}">${s.locked ? "&#128274;" : ""}</div>`;
+      })
+      .join("");
+
+    grid.querySelectorAll(".color-swatch:not(.locked)").forEach((el) => {
+      el.addEventListener("click", () => {
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        ws.send(JSON.stringify({ type: "setColor", color: el.dataset.color }));
+      });
+    });
   }
 
   function renderEventBanner() {
@@ -297,6 +337,7 @@
         subsolar = msg.subsolar;
         if (msg.fortify) fortifyCfg = msg.fortify;
         if (msg.abilities) abilityCfg = msg.abilities;
+        if (msg.cosmetics) cosmeticsCfg = msg.cosmetics;
         currentEventState = msg.event || null;
         if (msg.season) seasonInfo = msg.season;
         recentSeasons = msg.recentSeasons || [];
@@ -480,6 +521,13 @@
     if (!targetGuild || !ws || ws.readyState !== WebSocket.OPEN) return;
     ws.send(JSON.stringify({ type: "declareWar", targetGuild }));
     input.value = "";
+  });
+
+  document.getElementById("tipJarLink").addEventListener("click", (e) => {
+    if (document.getElementById("tipJarLink").getAttribute("href") === "#") {
+      e.preventDefault();
+      showToast("Tip jar coming soon!");
+    }
   });
 
   document.getElementById("inviteBtn").addEventListener("click", () => {
