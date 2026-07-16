@@ -46,6 +46,7 @@ async function verifyAppleToken(idToken) {
 }
 
 const PORT = process.env.PORT || 8787;
+const PUBLIC_ORIGIN = (process.env.PUBLIC_ORIGIN || "").trim().replace(/\/$/, "");
 const TICK_MS = 2000;
 const FLUSH_MS = 20000; // how often owned territory / accounts get persisted to D1
 const BASE_CLAIM_COST = 10;
@@ -82,9 +83,9 @@ const WAR_DURATION_MS = 24 * 60 * 60 * 1000; // 24 real hours
 const WAR_VICTORY_REWARD = 100; // Lumen bonus to each online winning-guild member
 
 // ---- lightweight, privacy-respecting usage stats (no player-identifying data) ----
-const ADMIN_STATS_KEY = process.env.ADMIN_STATS_KEY || crypto.randomBytes(16).toString("hex");
+const ADMIN_STATS_KEY = (process.env.ADMIN_STATS_KEY || "").trim();
 if (!process.env.ADMIN_STATS_KEY) {
-  console.log(`ADMIN_STATS_KEY not set -- using a random key for this run: ${ADMIN_STATS_KEY} (set a stable one in Render's env vars to keep /stats accessible across restarts)`);
+  console.log("ADMIN_STATS_KEY not set -- the /stats endpoint is disabled. Set a stable secret in your host's environment settings to enable it.");
 }
 function todayStr() {
   return new Date().toISOString().slice(0, 10); // YYYY-MM-DD (UTC)
@@ -454,9 +455,36 @@ function startTicking() {
 
 // ---- websocket handling ----
 const app = express();
+app.disable("x-powered-by");
+app.use((req, res, next) => {
+  res.setHeader("Content-Security-Policy", [
+    "default-src 'self'",
+    "base-uri 'self'",
+    "object-src 'none'",
+    "frame-ancestors 'none'",
+    "form-action 'self'",
+    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://accounts.google.com https://appleid.cdn-apple.com",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data:",
+    "font-src 'self' data:",
+    "connect-src 'self' https://nom.telemetrydeck.com wss:",
+  ].join("; "));
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader("Permissions-Policy", "camera=(), geolocation=(), microphone=(), payment=(), usb=()");
+  if (req.secure || req.get("x-forwarded-proto") === "https") {
+    res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  }
+  next();
+});
 app.get("/health", (req, res) => res.status(200).send("ok")); // for uptime pingers -- cheap, no static file read
 app.get("/stats", async (req, res) => {
-  if (req.query.key !== ADMIN_STATS_KEY) return res.status(403).send("forbidden");
+  const authorization = req.get("authorization") || "";
+  const providedKey = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
+  const allowed = ADMIN_STATS_KEY && providedKey.length === ADMIN_STATS_KEY.length
+    && crypto.timingSafeEqual(Buffer.from(providedKey), Buffer.from(ADMIN_STATS_KEY));
+  if (!allowed) return res.status(403).send("forbidden");
   const recentDays = await persistence.getDailyStats(30);
   res.json({
     now: { playersOnline: players.size, activeGuildWars: wars.size, seasonNumber, seasonStartedAt },
@@ -514,7 +542,14 @@ async function main() {
     console.log(`Meridian running: http://localhost:${PORT}`);
     console.log(`Persistence: ${persistence.enabled ? "ON (Cloudflare D1)" : "OFF (in-memory only)"}`);
   });
-  wss = new WebSocketServer({ server, maxPayload: 4096 }); // 4KB is plenty for our small JSON messages
+  wss = new WebSocketServer({
+    server,
+    maxPayload: 4096,
+    verifyClient: (info, done) => {
+      if (!PUBLIC_ORIGIN || info.origin === PUBLIC_ORIGIN) return done(true);
+      done(false, 403, "WebSocket origin not allowed");
+    },
+  }); // 4KB is plenty for our small JSON messages
   attachWebSocketHandlers();
   startTicking();
 }
@@ -665,8 +700,8 @@ wss.on("connection", (ws, req) => {
           send(ws, { type: "error", message: "Username must be 3-20 letters, numbers, or underscores." });
           return;
         }
-        if (password.length < 6 || password.length > 100) {
-          send(ws, { type: "error", message: "Password must be 6-100 characters." });
+        if (password.length < 10 || password.length > 100) {
+          send(ws, { type: "error", message: "Password must be 10-100 characters." });
           return;
         }
         if (!persistence.enabled) {

@@ -858,8 +858,8 @@
       document.getElementById("authError").textContent = "Username must be at least 3 characters.";
       return;
     }
-    if (password.length < 6) {
-      document.getElementById("authError").textContent = "Password must be at least 6 characters.";
+    if (password.length < 10) {
+      document.getElementById("authError").textContent = "Password must be at least 10 characters.";
       return;
     }
     connect({ type: "signup", username, password, guild });
